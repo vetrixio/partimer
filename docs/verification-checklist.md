@@ -4,10 +4,11 @@ What cannot be checked automatically. Install the build from the draft release o
 
 ## Release assets (checked automatically on the rc build)
 
-Checked by downloading the assets of a test draft release (`v0.1.0-rc.N`, deleted afterwards). Repeat for the real release if the build changes.
+Checked on the test build `v0.1.0-rc.1` (2026-11-07; tag deleted afterwards) from the release workflow log, and the `.deb` control file from a local Linux build with the same config and Tauri CLI. Re-check when the bundle config changes.
 
-- [ ] Every asset file name is English (`partimer_<version>_<platform>_<arch>…`).
-- [ ] `dpkg-deb -f partimer_<version>_linux_amd64.deb Package` prints `partimer`.
+- [x] Every asset file name is English: `partimer_0.1.0_darwin_universal.dmg`, `partimer_0.1.0_darwin_universal.app.tar.gz`, `partimer_0.1.0_windows_x64-setup.exe`, `partimer_0.1.0_linux_amd64.deb`, `partimer_0.1.0_linux_amd64.AppImage`.
+- [x] `dpkg-deb -f partimer_0.1.0_linux_amd64.deb Package` prints `partimer`. (With the Chinese product name it printed `打工人計時器`, which dpkg rejects; Linux now uses the product name `partimer` and the desktop entry keeps `Name=打工人計時器`.)
+- [x] Expected names, still to be confirmed on the machines (M2, W2, U2): the macOS bundle inside the `.dmg` is `打工人計時器.app`; the Windows installer creates the Start-menu shortcut `打工人計時器` (no folder) and the Installed-apps entry `打工人計時器`, installing to `%LOCALAPPDATA%\打工人計時器`; the Ubuntu app list shows `打工人計時器` from `partimer.desktop`.
 
 ## macOS
 
