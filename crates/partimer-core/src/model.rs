@@ -87,7 +87,9 @@ pub struct Data {
     pub clients: Vec<Client>,
     pub projects: Vec<Project>,
     pub entries: Vec<Entry>,
-    /// Entries that failed to parse; kept verbatim so no user data is lost.
+    /// Items that failed to parse; kept verbatim so no user data is lost.
+    pub quarantined_clients: Vec<Value>,
+    pub quarantined_projects: Vec<Value>,
     pub quarantined_entries: Vec<Value>,
     pub settings: Settings,
 }
@@ -99,6 +101,8 @@ impl Default for Data {
             clients: Vec::new(),
             projects: Vec::new(),
             entries: Vec::new(),
+            quarantined_clients: Vec::new(),
+            quarantined_projects: Vec::new(),
             quarantined_entries: Vec::new(),
             settings: Settings::default(),
         }
@@ -111,25 +115,37 @@ pub enum ParseError {
     Json(#[from] serde_json::Error),
     #[error("top-level JSON value is not an object")]
     NotObject,
+    #[error("`{0}` is present but not an array")]
+    NotArray(String),
 }
 
-fn take_array(obj: &mut Map<String, Value>, key: &str) -> Vec<Value> {
+fn take_array(obj: &mut Map<String, Value>, key: &str) -> Result<Vec<Value>, ParseError> {
     match obj.remove(key) {
-        Some(Value::Array(a)) => a,
-        _ => Vec::new(),
+        None => Ok(Vec::new()),
+        Some(Value::Array(a)) => Ok(a),
+        Some(_) => Err(ParseError::NotArray(key.to_string())),
     }
 }
 
-/// Parse items one by one, silently dropping the ones that do not fit.
-fn parse_lenient<T: serde::de::DeserializeOwned>(items: Vec<Value>) -> Vec<T> {
-    items
-        .into_iter()
-        .filter_map(|v| serde_json::from_value(v).ok())
-        .collect()
+/// Parse items one by one; the ones that do not fit are pushed (verbatim)
+/// into `quarantine` so nothing is lost on the next save.
+fn parse_or_quarantine<T: serde::de::DeserializeOwned>(
+    items: Vec<Value>,
+    quarantine: &mut Vec<Value>,
+) -> Vec<T> {
+    let mut ok = Vec::new();
+    for raw in items {
+        match serde_json::from_value::<T>(raw.clone()) {
+            Ok(v) => ok.push(v),
+            Err(_) => quarantine.push(raw),
+        }
+    }
+    ok
 }
 
-/// Lenient parser: unknown/missing optional fields get defaults, broken
-/// clients/projects are skipped, broken entries are quarantined.
+/// Lenient parser: missing optional fields get defaults, broken
+/// clients/projects/entries are quarantined. A list key that is present but
+/// not an array is an error (the file is treated as corrupt).
 pub fn parse_data(bytes: &[u8]) -> Result<Data, ParseError> {
     let Value::Object(mut obj) = serde_json::from_slice::<Value>(bytes)? else {
         return Err(ParseError::NotObject);
@@ -140,17 +156,14 @@ pub fn parse_data(bytes: &[u8]) -> Result<Data, ParseError> {
         .and_then(Value::as_u64)
         .and_then(|v| u32::try_from(v).ok())
         .unwrap_or(DATA_VERSION);
-    let clients = parse_lenient(take_array(&mut obj, "clients"));
-    let projects = parse_lenient(take_array(&mut obj, "projects"));
 
-    let mut entries = Vec::new();
-    let mut quarantined_entries = take_array(&mut obj, "quarantinedEntries");
-    for raw in take_array(&mut obj, "entries") {
-        match serde_json::from_value::<Entry>(raw.clone()) {
-            Ok(e) => entries.push(e),
-            Err(_) => quarantined_entries.push(raw),
-        }
-    }
+    let mut quarantined_clients = take_array(&mut obj, "quarantinedClients")?;
+    let mut quarantined_projects = take_array(&mut obj, "quarantinedProjects")?;
+    let mut quarantined_entries = take_array(&mut obj, "quarantinedEntries")?;
+    let clients = parse_or_quarantine(take_array(&mut obj, "clients")?, &mut quarantined_clients);
+    let projects =
+        parse_or_quarantine(take_array(&mut obj, "projects")?, &mut quarantined_projects);
+    let entries = parse_or_quarantine(take_array(&mut obj, "entries")?, &mut quarantined_entries);
 
     let settings = obj
         .remove("settings")
@@ -162,6 +175,8 @@ pub fn parse_data(bytes: &[u8]) -> Result<Data, ParseError> {
         clients,
         projects,
         entries,
+        quarantined_clients,
+        quarantined_projects,
         quarantined_entries,
         settings,
     })
@@ -200,7 +215,34 @@ mod tests {
         assert_eq!(d.quarantined_entries.len(), 1);
         // saved and re-read, the quarantined one survives
         let again = parse_data(&to_json(&d)).unwrap();
-        assert_eq!(again.quarantined_entries.len(), 1);
+        assert_eq!(again.quarantined_entries, d.quarantined_entries);
+    }
+
+    #[test]
+    fn bad_client_and_project_are_quarantined_and_survive_round_trip() {
+        let d = parse_data(
+            br#"{"clients":[{"id":"c1","name":"ok"},{"id":"c2","name":null}],
+                 "projects":[{"id":"p1","clientId":"c1","name":"ok"},
+                             {"id":"p2","clientId":"c1","name":"x","color":300}]}"#,
+        )
+        .unwrap();
+        assert_eq!(d.clients.len(), 1);
+        assert_eq!(d.projects.len(), 1);
+        assert_eq!(d.quarantined_clients.len(), 1);
+        assert_eq!(d.quarantined_projects.len(), 1);
+        let again = parse_data(&to_json(&d)).unwrap();
+        assert_eq!(again.quarantined_clients, d.quarantined_clients);
+        assert_eq!(again.quarantined_projects, d.quarantined_projects);
+        assert_eq!(again.clients.len(), 1);
+        assert_eq!(again.projects.len(), 1);
+    }
+
+    #[test]
+    fn list_key_not_an_array_is_error() {
+        for key in ["entries", "clients", "projects", "quarantinedEntries"] {
+            let json = format!(r#"{{"{key}":{{}}}}"#);
+            assert!(parse_data(json.as_bytes()).is_err(), "{key}");
+        }
     }
 
     #[test]
