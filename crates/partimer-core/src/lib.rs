@@ -18,5 +18,4 @@ pub use session::Session;
 pub use storage::{Paths, RealFs, default_dir};
 pub use timer::*;
 pub use views::*;
-pub use zone::SystemZone;
 pub use zone::*;
