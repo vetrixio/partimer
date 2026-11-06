@@ -56,6 +56,10 @@ pub fn add_project(
                 return Err(CatalogError::DuplicateProject);
             }
             let count = siblings.count();
+            // Unarchive the merged client so the new project shows in `active_groups`.
+            if let Some(c) = data.clients.iter_mut().find(|c| c.id == id) {
+                c.archived = false;
+            }
             (id, (count % COLOR_COUNT as usize) as u8)
         }
         None => {
@@ -547,6 +551,44 @@ mod tests {
         d.settings.last_project_id = Some(p2.clone());
         delete_project(&mut d, &p1).unwrap();
         assert_eq!(d.settings.last_project_id, Some(p2));
+    }
+
+    #[test]
+    fn add_project_unarchives_merged_client() {
+        let mut d = Data::default();
+        add_project(&mut d, "王小明", "舊案").unwrap();
+        let c = d.clients[0].id.clone();
+        set_client_archived(&mut d, &c, true).unwrap();
+        let p = add_project(&mut d, " 王小明 ", "新案").unwrap();
+        assert_eq!(d.clients.len(), 1);
+        assert!(!d.clients[0].archived);
+        let g = active_groups(&d);
+        assert!(g[0].1.iter().any(|x| x.id == p));
+    }
+
+    #[test]
+    fn color_wraps_after_eight_projects() {
+        let mut d = Data::default();
+        let mut last = String::new();
+        for i in 0..9 {
+            last = add_project(&mut d, "A", &format!("P{i}")).unwrap();
+        }
+        let p = d.projects.iter().find(|p| p.id == last).unwrap();
+        assert_eq!(p.color, 0);
+        assert_eq!(d.projects[7].color, 7);
+    }
+
+    #[test]
+    fn client_impact_flags_running_entry() {
+        let mut d = Data::default();
+        let p = add_project(&mut d, "A", "P").unwrap();
+        d.entries.push(entry(&p, "2026-11-06T11:00:00Z", None));
+        let c = d.clients[0].id.clone();
+        assert!(
+            client_deletion_impact(&d, &c, now())
+                .unwrap()
+                .includes_running
+        );
     }
 
     #[test]
