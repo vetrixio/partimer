@@ -20,6 +20,8 @@ pub struct MemFs {
     pub files: std::cell::RefCell<std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>>,
     /// When true, `write_sync`/`rename`/`copy`/`append` fail with `StorageFull`.
     pub fail_writes: std::cell::Cell<bool>,
+    /// When true, only `rename` fails (with `StorageFull`).
+    pub fail_renames: std::cell::Cell<bool>,
     /// Reads of this path fail with `PermissionDenied`.
     pub fail_reads_of: std::cell::RefCell<Option<std::path::PathBuf>>,
 }
@@ -67,6 +69,9 @@ impl crate::storage::Fs for MemFs {
 
     fn rename(&self, from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
         self.check_write()?;
+        if self.fail_renames.get() {
+            return Err(std::io::ErrorKind::StorageFull.into());
+        }
         let mut files = self.files.borrow_mut();
         let b = files
             .remove(from)

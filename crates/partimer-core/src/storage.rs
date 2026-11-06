@@ -264,20 +264,26 @@ pub fn load(fs: &dyn Fs, paths: &Paths, zone: &dyn LocalZone, now: DateTime<Utc>
 
 /// Copy `data.json` to today's backup (once per day) and keep the newest `BACKUP_KEEP`.
 pub fn ensure_daily_backup(fs: &dyn Fs, paths: &Paths, date: NaiveDate) -> io::Result<bool> {
-    if !fs.exists(&paths.data()) {
-        return Ok(false);
-    }
+    let bytes = match fs.read(&paths.data()) {
+        Ok(b) => b,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
     let target = paths.backup_for(date);
     if fs.exists(&target) {
         return Ok(false);
     }
+    // Never back up a file that does not parse: it would only displace good backups.
+    if parse_data(&bytes).is_err() {
+        return Ok(false);
+    }
     fs.create_dir_all(&paths.backups())?;
-    // Copy to a temp name first so a half-written file never counts as today's backup.
+    // Durable write to a temp name, then rename: a partial file never counts as a backup.
     let tmp = paths
         .backups()
         .join(format!("data-{}.json.tmp", date.format("%Y-%m-%d")));
     let result = fs
-        .copy(&paths.data(), &tmp)
+        .write_sync(&tmp, &bytes)
         .and_then(|_| fs.rename(&tmp, &target));
     if let Err(e) = result {
         let _ = fs.remove(&tmp);
@@ -606,5 +612,39 @@ mod tests {
         if let Some(p) = default_dir() {
             assert!(p.ends_with("partimer"));
         }
+    }
+
+    #[test]
+    fn corrupt_data_produces_no_backup() {
+        let fs = MemFs::new();
+        fs.put(paths().data(), b"{broken");
+        assert!(!ensure_daily_backup(&fs, &paths(), d(10, 6)).unwrap());
+        assert!(!fs.exists(&paths().backup_for(d(10, 6))));
+        assert_eq!(fs.names(), vec![paths().data()]);
+    }
+
+    #[test]
+    fn backup_rename_failure_leaves_no_final_file_and_retry_works() {
+        let fs = MemFs::new();
+        fs.put(paths().data(), GOOD_A.as_bytes());
+        fs.fail_renames.set(true);
+        assert!(ensure_daily_backup(&fs, &paths(), d(10, 6)).is_err());
+        assert!(!fs.exists(&paths().backup_for(d(10, 6))));
+        assert!(
+            !fs.names()
+                .iter()
+                .any(|p| p.to_string_lossy().ends_with(".tmp"))
+        );
+        fs.fail_renames.set(false);
+        assert!(ensure_daily_backup(&fs, &paths(), d(10, 6)).unwrap());
+    }
+
+    #[test]
+    fn save_rename_failure_keeps_old_file() {
+        let fs = MemFs::new();
+        fs.put(paths().data(), GOOD_B.as_bytes());
+        fs.fail_renames.set(true);
+        assert!(save_atomic(&fs, &paths(), &sample()).is_err());
+        assert_eq!(fs.get(&paths().data()).unwrap(), GOOD_B.as_bytes());
     }
 }
