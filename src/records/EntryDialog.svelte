@@ -31,16 +31,22 @@
 
   onMount(() => first?.focus());
 
-  function toggleRunning() {
+  function toggleRunning(running: boolean) {
+    form.stillRunning = running;
     // Turning "still running" off needs an end time to start from.
-    if (!form.stillRunning && !form.endLocal) form.endLocal = toLocalInput(new Date());
+    if (!running && !form.endLocal) form.endLocal = toLocalInput(new Date());
   }
 
   async function save() {
     busy = true;
     error = null;
     try {
-      await api.saveEntry(id, { ...form, endLocal: form.stillRunning ? null : form.endLocal });
+      await api.saveEntry(id, {
+        ...form,
+        // An emptied number field is null; the backend would reject it with a raw error.
+        pausedMinutes: Number(form.pausedMinutes) || 0,
+        endLocal: form.stillRunning ? null : form.endLocal,
+      });
       ondone();
     } catch (e) {
       error = String(e);
@@ -117,7 +123,11 @@
 
     {#if canStayRunning}
       <label class="check">
-        <input type="checkbox" bind:checked={form.stillRunning} onchange={toggleRunning} />
+        <input
+          type="checkbox"
+          checked={form.stillRunning}
+          onchange={(e) => toggleRunning(e.currentTarget.checked)}
+        />
         <span>仍在計時</span>
       </label>
     {/if}

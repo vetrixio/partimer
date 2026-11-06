@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import { onMount } from "svelte";
+  import { ask } from "@tauri-apps/plugin-dialog";
   import {
     api,
     onOpenEntry,
@@ -32,7 +33,13 @@
   let nowMs = $state(Date.now());
   let message = $state<string | null>(null);
   let exporting = $state(false);
-  let dialog = $state<{ id: Id | null; form: EntryForm; catalog: CatalogView } | null>(null);
+  let dialog = $state<{
+    key: number;
+    id: Id | null;
+    form: EntryForm;
+    catalog: CatalogView;
+  } | null>(null);
+  let dialogKey = 0;
 
   // Only the newest response wins; a slow older one must not overwrite it.
   let seq = 0;
@@ -53,7 +60,7 @@
     message = null;
     try {
       const [form, catalog] = await Promise.all([api.getEntryForm(id), api.getCatalog()]);
-      dialog = { id, form, catalog };
+      dialog = { key: ++dialogKey, id, form, catalog };
     } catch (e) {
       message = String(e);
     }
@@ -61,6 +68,8 @@
 
   /** From the panel or tray: show the month the entry is in, with no filter hiding it. */
   async function jumpToEntry(id: Id) {
+    if (dialog && !(await ask("放棄目前的編輯，改開另一筆紀錄？", { title: "紀錄", kind: "warning" })))
+      return;
     try {
       const form = await api.getEntryForm(id);
       const m = /^(\d{4})-(\d{2})/.exec(form.startLocal);
@@ -69,7 +78,7 @@
         await load();
       }
       const catalog = await api.getCatalog();
-      dialog = { id, form, catalog };
+      dialog = { key: ++dialogKey, id, form, catalog };
     } catch (e) {
       message = String(e);
     }
@@ -257,6 +266,7 @@
   {/if}
 
   {#if dialog}
+    {#key dialog.key}
     <EntryDialog
       id={dialog.id}
       initial={dialog.form}
@@ -264,6 +274,7 @@
       ondone={afterDialog}
       oncancel={() => (dialog = null)}
     />
+    {/key}
   {/if}
 </main>
 
