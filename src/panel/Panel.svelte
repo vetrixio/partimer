@@ -88,18 +88,25 @@
 
   /**
    * Run one command with the fields' current values. `confirm` runs first (e.g. a dialog);
-   * returning false cancels without touching anything.
+   * returning false cancels without touching anything. `draft: false` for commands that
+   * neither take nor affect the text (they leave the fields alone).
    */
   async function command(
     run: (v: { title: string; content: string }) => Promise<PanelState>,
-    confirm?: () => Promise<boolean>,
+    { confirm, draft = true }: { confirm?: () => Promise<boolean>; draft?: boolean } = {},
   ): Promise<boolean> {
     if (busy || !panel) return false;
+    const f = draft ? fields : undefined;
+    if (draft && !f) {
+      error = "輸入框還沒準備好，請再按一次";
+      return false;
+    }
+    const generation = panel.draft.generation;
     busy = true;
     error = null;
     try {
       if (confirm && !(await confirm())) return false;
-      const v = fields ? await fields.getValues() : { title: "", content: "" };
+      const v = f ? await f.getValues() : { title: "", content: "" };
       const seq = ++requestSeq;
       apply(await run(v), seq);
       return true;
@@ -108,6 +115,9 @@
       return false;
     } finally {
       busy = false;
+      // Same draft → the same fields stay: let them sync again. A new generation rebuilds
+      // them, and the old ones stay closed (their text belongs to the finished command).
+      if (f && panel?.draft.generation === generation) f.reopen();
       if (refreshAfterCommand) {
         refreshAfterCommand = false;
         void refresh();
@@ -141,30 +151,29 @@
 
   async function save() {
     const before = fields;
+    const generation = panel?.draft.generation;
     const ok = await command((v) => api.saveDraft(v.title, v.content));
     // Saving keeps the same fields (no new generation): let the user keep typing.
-    if (ok && fields && fields === before) fields.refocus();
+    if (ok && before && panel?.draft.generation === generation) before.refocus();
   }
 
   async function pick(id: Id) {
-    await command(
-      (v) => api.selectProject(id, v.title, v.content),
-      timing ? confirmSwitch : undefined,
-    );
+    await command((v) => api.selectProject(id, v.title, v.content), {
+      confirm: timing ? confirmSwitch : undefined,
+    });
   }
 
   async function addProject(client: string, project: string): Promise<true | string | null> {
     // Creating a project while timing switches to it, so it needs the same confirmation.
     let cancelled = false;
-    const ok = await command(
-      (v) => api.addProject(client, project, v.title, v.content),
-      timing
+    const ok = await command((v) => api.addProject(client, project, v.title, v.content), {
+      confirm: timing
         ? async () => {
             cancelled = !(await confirmSwitch());
             return !cancelled;
           }
         : undefined,
-    );
+    });
     if (ok) return true;
     if (cancelled) return null;
     // Show the error under the form instead of under the buttons.
@@ -183,11 +192,11 @@
   }
 
   function snooze() {
-    void command(() => api.snoozeLongRunning());
+    void command(() => api.snoozeLongRunning(), { draft: false });
   }
 
   function dismiss(n: Notice) {
-    void command(() => api.dismissNotice(n.id));
+    void command(() => api.dismissNotice(n.id), { draft: false });
   }
 
   function openRecords(entryId: Id | null = null) {
@@ -199,18 +208,20 @@
   }
 
   async function quit() {
-    if (busy) return;
+    if (busy || !panel) return;
     busy = true;
+    const f = fields;
     try {
       // Hand the latest text to the backend; it saves an unsaved draft on exit.
-      if (fields) {
-        const v = await fields.getValues();
-        await api.setDraft(v.title, v.content);
+      if (f) {
+        const v = await f.getValues();
+        await api.setDraft(v.title, v.content, panel.draft.generation);
       }
       await api.quitApp();
     } catch (e) {
       error = String(e);
       busy = false;
+      f?.reopen();
     }
   }
 
@@ -220,7 +231,9 @@
   function keydown(e: KeyboardEvent) {
     if (imeKey(e)) return;
     const mod = isMac ? e.metaKey : e.ctrlKey;
-    if (mod && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "s") {
+    // `code` too: some IME modes report another `key` for the S key.
+    const sKey = e.code === "KeyS" || e.key.toLowerCase() === "s";
+    if (mod && !e.altKey && !e.shiftKey && sKey) {
       e.preventDefault();
       if (timing && !busy) void save();
       return;
@@ -327,6 +340,7 @@
         bind:this={fields}
         title={panel.draft.title}
         content={panel.draft.content}
+        generation={panel.draft.generation}
         onedit={(title, content) => (edited = { title, content })}
       />
     {/key}

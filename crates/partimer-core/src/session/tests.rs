@@ -180,7 +180,11 @@ fn start_stop_cycle_persists_and_clears_draft() {
     assert_eq!(disk_entry(&s, &id).end, None);
     let gen_running = p.draft.generation;
 
-    s.set_draft("首頁切版".into(), "- 改 banner\n- 修 RWD".into());
+    s.set_draft(
+        "首頁切版".into(),
+        "- 改 banner\n- 修 RWD".into(),
+        s.draft.generation,
+    );
     assert!(!s.panel_state(at(60)).draft_saved);
     s.stop("首頁切版", "- 改 banner\n- 修 RWD", at(H)).unwrap();
 
@@ -203,7 +207,7 @@ fn draft_is_memory_only() {
     s.start("p1", "a", "", at(0)).unwrap();
     let before = s.fs.get(&paths().data()).unwrap();
     let generation = s.panel_state(at(1)).draft.generation;
-    s.set_draft("新標題".into(), "打字中".into());
+    s.set_draft("新標題".into(), "打字中".into(), s.draft.generation);
     assert_eq!(s.fs.get(&paths().data()).unwrap(), before);
     let p = s.panel_state(at(1));
     assert_eq!(p.draft.title, "新標題");
@@ -217,7 +221,7 @@ fn stopped_entry_not_touched_by_later_draft() {
     s.start("p1", "A", "B", at(0)).unwrap();
     let id = running_id(&s, at(1));
     s.stop("A", "B", at(60)).unwrap();
-    s.set_draft(String::new(), String::new());
+    s.set_draft(String::new(), String::new(), s.draft.generation);
     assert!(s.save_draft("", "", at(120)).is_err());
     let e = disk_entry(&s, &id);
     assert_eq!((e.title.as_str(), e.content.as_str()), ("A", "B"));
@@ -239,6 +243,24 @@ fn double_stop_is_noop() {
     assert_eq!(s.panel_state(at(61)).draft, draft);
     assert_eq!(s.fs.get(&paths().data()).unwrap(), bytes);
     assert_eq!(count_action(&s, "STOP"), 1);
+}
+
+#[test]
+fn stale_set_draft_is_ignored() {
+    let mut s = open(seeded(), at(0));
+    s.start("p1", "A", "", at(0)).unwrap();
+    let old_generation = s.panel_state(at(1)).draft.generation;
+    s.stop("A", "finished text", at(60)).unwrap();
+    let draft = s.panel_state(at(61)).draft;
+    assert_ne!(draft.generation, old_generation);
+    // A late sync from the fields of the finished entry must not become the next draft.
+    s.set_draft("A".into(), "finished text".into(), old_generation);
+    assert_eq!(s.panel_state(at(62)).draft, draft);
+    // The current fields still sync.
+    s.set_draft("B".into(), "next".into(), draft.generation);
+    let now = s.panel_state(at(63)).draft;
+    assert_eq!((now.title.as_str(), now.content.as_str()), ("B", "next"));
+    assert_eq!(now.generation, draft.generation);
 }
 
 #[test]
@@ -297,7 +319,7 @@ fn select_same_project_while_running_is_noop() {
 fn select_project_while_idle_keeps_typed_content() {
     let mut s = open(seeded(), at(0));
     let generation = s.panel_state(at(0)).draft.generation;
-    s.set_draft("首頁切版".into(), "筆記".into());
+    s.set_draft("首頁切版".into(), "筆記".into(), s.draft.generation);
     s.select_project("p2", "首頁切版", "筆記", at(1)).unwrap();
     let p = s.panel_state(at(1));
     assert_eq!(p.status, TimerStatus::Idle);
@@ -487,7 +509,7 @@ fn selected_project_falls_back_when_last_deleted() {
     );
 
     assert_eq!(s.panel_state(at(0)).draft.title, "配色");
-    s.set_draft("配色".into(), "筆記".into());
+    s.set_draft("配色".into(), "筆記".into(), s.draft.generation);
     let generation = s.panel_state(at(0)).draft.generation;
 
     s.set_project_archived("p2", true, at(1)).unwrap();
@@ -808,7 +830,7 @@ fn editing_running_entry_keeps_dirty_draft_and_notifies() {
     let mut s = open(seeded(), at(0));
     s.start("p1", "A", "B", at(0)).unwrap();
     let id = running_id(&s, at(1));
-    s.set_draft("A".into(), "打字中".into());
+    s.set_draft("A".into(), "打字中".into(), s.draft.generation);
     let generation = s.panel_state(at(1)).draft.generation;
     let mut f = s.entry_form(&id).unwrap();
     f.title = "A2".into();
@@ -887,7 +909,7 @@ fn save_draft_writes_running_entry() {
     let mut s = open(seeded(), at(0));
     s.start("p1", "A", "", at(0)).unwrap();
     let id = running_id(&s, at(1));
-    s.set_draft("A".into(), "note".into());
+    s.set_draft("A".into(), "note".into(), s.draft.generation);
     let generation = s.panel_state(at(1)).draft.generation;
     s.save_draft("A", "note", at(5)).unwrap();
     assert_eq!(disk_entry(&s, &id).content, "note");
@@ -1017,7 +1039,7 @@ fn flush_on_exit_saves_dirty_draft() {
     let mut s = open(seeded(), at(0));
     s.start("p1", "A", "", at(0)).unwrap();
     let id = running_id(&s, at(1));
-    s.set_draft("A".into(), "late note".into());
+    s.set_draft("A".into(), "late note".into(), s.draft.generation);
     s.flush_on_exit(at(60));
     let e = disk_entry(&s, &id);
     assert_eq!(e.content, "late note");
@@ -1049,7 +1071,7 @@ fn finishing_running_entry_in_records_keeps_dirty_draft_with_notice() {
     let mut s = open(seeded(), at(0));
     s.start("p1", "A", "B", at(0)).unwrap();
     let id = running_id(&s, at(1));
-    s.set_draft("A".into(), "沒存的字".into());
+    s.set_draft("A".into(), "沒存的字".into(), s.draft.generation);
     let mut f = s.entry_form(&id).unwrap();
     f.still_running = false;
     f.end_local = Some("2026-10-06T09:30".into());
@@ -1070,7 +1092,7 @@ fn save_draft_clears_edited_elsewhere_notice() {
     let mut s = open(seeded(), at(0));
     s.start("p1", "A", "B", at(0)).unwrap();
     let id = running_id(&s, at(1));
-    s.set_draft("A".into(), "打字中".into());
+    s.set_draft("A".into(), "打字中".into(), s.draft.generation);
     let mut f = s.entry_form(&id).unwrap();
     f.title = "A2".into();
     s.save_entry(Some(&id), f, at(60)).unwrap();

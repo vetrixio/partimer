@@ -184,7 +184,9 @@ export type PanelOrigin = "widget" | "tray" | "shortcut";
 export const api = {
   // panel
   getPanelState: () => invoke<PanelState>("get_panel_state"),
-  setDraft: (title: string, content: string) => invoke<void>("set_draft", { title, content }),
+  /** `generation`: the draft the fields were built from; the backend ignores stale syncs. */
+  setDraft: (title: string, content: string, generation: number) =>
+    invoke<void>("set_draft", { title, content, generation }),
   start: (projectId: Id, title: string, content: string) =>
     invoke<PanelState>("start", { projectId, title, content }),
   stop: (title: string, content: string) => invoke<PanelState>("stop", { title, content }),

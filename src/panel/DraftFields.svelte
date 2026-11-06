@@ -12,20 +12,32 @@
     title: string;
     /** Read once on mount. */
     content: string;
+    /** The draft generation these fields were built from; sent with every sync. */
+    generation: number;
     /** Called on every edit with the current values (for the saved/unsaved label only). */
     onedit?: (title: string, content: string) => void;
   }
 
-  let { title, content, onedit }: Props = $props();
+  let { title, content, generation, onedit }: Props = $props();
 
   let titleEl: HTMLInputElement;
   let contentEl: HTMLTextAreaElement;
+  /** Fixed at mount, like the initial values. */
+  let builtFrom = 0;
 
   let composing = false;
   let compositionWaiters: (() => void)[] = [];
-  // The last draft sync; awaited before handing values to a command, so a late `set_draft`
-  // can never land after (and overwrite the draft of) the entry that command creates.
+  /**
+   * Set by `getValues`: the values now belong to a command, so nothing more is synced until the
+   * parent calls `reopen` (only when these same fields stay). Without this, typing during a
+   * command or a late `compositionend` could send old text after STOP.
+   */
+  let closed = false;
+  // The last draft sync; awaited before handing values to a command, so a `set_draft` already
+  // sent always reaches the backend before the command does.
   let lastSync: Promise<unknown> = Promise.resolve();
+  /** What the backend last got from these fields. */
+  let synced = { title: "", content: "" };
 
   /** The field that had focus when `getValues` blurred it, with its caret. */
   let blurred: { el: HTMLInputElement | HTMLTextAreaElement; start: number; end: number } | null =
@@ -37,13 +49,24 @@
   onMount(() => {
     titleEl.value = title;
     contentEl.value = content;
+    builtFrom = generation;
+    synced = { title, content };
   });
 
   function sync() {
     const t = titleEl.value;
     const c = contentEl.value;
-    lastSync = api.setDraft(t, c).catch((e) => console.warn("partimer: set_draft", e));
     onedit?.(t, c);
+    if (closed) return;
+    synced = { title: t, content: c };
+    lastSync = api.setDraft(t, c, builtFrom).catch((e) => console.warn("partimer: set_draft", e));
+  }
+
+  function endComposition() {
+    composing = false;
+    const waiters = compositionWaiters;
+    compositionWaiters = [];
+    waiters.forEach((w) => w());
   }
 
   function compositionStart() {
@@ -51,10 +74,7 @@
   }
 
   function compositionEnd() {
-    composing = false;
-    const waiters = compositionWaiters;
-    compositionWaiters = [];
-    waiters.forEach((w) => w());
+    endComposition();
     // Some engines send no `input` after the composition is committed.
     sync();
   }
@@ -65,15 +85,18 @@
   }
 
   /**
-   * End editing and return what the fields hold right now (spec §5.2): wait for an IME
-   * composition to finish, blur, then read the DOM.
+   * End editing and return what the fields hold right now (spec §5.2): stop syncing, wait for
+   * an IME composition to finish, blur, then read the DOM.
    */
   export async function getValues(): Promise<{ title: string; content: string }> {
+    closed = true;
     if (composing) {
       await new Promise<void>((resolve) => {
         compositionWaiters.push(resolve);
         setTimeout(resolve, COMPOSITION_TIMEOUT_MS);
       });
+      // Timed out or not: blurring below commits whatever is left.
+      endComposition();
     }
     const active = [titleEl, contentEl].find((el) => el === document.activeElement);
     blurred = active
@@ -85,8 +108,19 @@
     return { title: titleEl.value, content: contentEl.value };
   }
 
+  /**
+   * The command finished and these fields stay (same generation): sync again, including
+   * anything typed while the command ran.
+   */
+  export function reopen() {
+    if (!closed) return;
+    closed = false;
+    if (titleEl.value !== synced.title || contentEl.value !== synced.content) sync();
+  }
+
   /** After a save (same fields, nothing rebuilt): put the caret back where the user was typing. */
   export function refocus() {
+    reopen();
     if (!blurred || !blurred.el.isConnected) return;
     blurred.el.focus();
     blurred.el.setSelectionRange(blurred.start, blurred.end);
@@ -106,6 +140,7 @@
     oninput={sync}
     oncompositionstart={compositionStart}
     oncompositionend={compositionEnd}
+    onblur={endComposition}
   />
   <textarea
     bind:this={contentEl}
@@ -117,6 +152,7 @@
     oninput={sync}
     oncompositionstart={compositionStart}
     oncompositionend={compositionEnd}
+    onblur={endComposition}
   ></textarea>
 </div>
 

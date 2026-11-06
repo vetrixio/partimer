@@ -3,8 +3,8 @@
 // `root` is the content's outer element. It may be capped at the window height
 // (`max-height: 100vh`); the parts allowed to scroll then are marked `data-autosize-scroll`,
 // and whatever they hide is added back, so the measured height is always the content's
-// natural height. Height is clamped to [220, available screen height − 40]; a 0 measurement
-// (hidden / not laid out yet) never resizes the window.
+// natural height. Height is clamped to [220, available screen height − 40]; an empty root or
+// a 0 measurement (hidden / not laid out yet) never resizes the window.
 
 import {
   LogicalPosition,
@@ -55,6 +55,8 @@ export function autosize(root: HTMLElement, width = 360): () => void {
   let running: Promise<void> = Promise.resolve();
 
   const apply = async () => {
+    // Nothing rendered yet (state still loading): keep the window as it is, no flash.
+    if (root.childElementCount === 0) return;
     const natural = naturalHeight(root);
     if (natural <= 0) return;
     const area = await workArea();

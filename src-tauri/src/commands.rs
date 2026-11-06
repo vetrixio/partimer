@@ -78,10 +78,11 @@ pub fn get_panel_state(state: State<'_, AppState>) -> PanelState {
     session(&state).panel_state(Utc::now())
 }
 
-/// Draft lives in memory only; no event (other windows do not show it).
+/// Draft lives in memory only; no event (other windows do not show it). Ignored when
+/// `generation` is not the current draft's (fields that were already replaced).
 #[tauri::command]
-pub fn set_draft(state: State<'_, AppState>, title: String, content: String) {
-    session(&state).set_draft(title, content);
+pub fn set_draft(state: State<'_, AppState>, title: String, content: String, generation: u64) {
+    session(&state).set_draft(title, content, generation);
 }
 
 #[tauri::command]

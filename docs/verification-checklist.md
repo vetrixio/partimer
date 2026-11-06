@@ -17,7 +17,7 @@
 - [ ] Hourly reminder on (settings): each full hour of running time shows 「已計時 N 小時・專案名」 once; nothing while paused; reopening the app after hours of running does not send a backlog.
 - [ ] 12-hour reminder: after 12 h of effective time (e.g. lid closed overnight) one notification 「是不是忘了停？已計時 12 小時・專案名」, not repeated every second; after 「沒忘，繼續計時」 the next one comes at 24 h.
 - [ ] Logging out / shutting down while timing keeps the unsaved title/content (OS quit path without the menu).
-- [ ] Chinese IME while timing — 注音 (Zhuyin/Bopomofo), 倉頡 (Cangjie) and 拼音 (Pinyin – Simplified or Traditional): type a sentence in 標題 and several lines in 內容 for at least a minute (past a minute change of the clock). The candidate window never closes by itself, no characters are lost or duplicated, the caret does not jump. Press ⌘S while a candidate window is open: nothing happens until you commit. Commit, then click STOP with the candidate window still open: the entry has the committed text.
+- [ ] Chinese IME while timing — 注音 (Zhuyin/Bopomofo), 倉頡 (Cangjie) and 拼音 (Pinyin – Simplified or Traditional): type a sentence in 標題 and several lines in 內容 for at least a minute (past a minute change of the clock). The candidate window never closes by itself, no characters are lost or duplicated, the caret does not jump. Press ⌘S while a candidate window is open: nothing happens until you commit. 中文輸入模式下按 ⌘S (IME switched on, nothing being composed): it saves. Commit, then click STOP with the candidate window still open: the entry has the committed text.
 
 ## Windows
 
@@ -32,7 +32,7 @@
 - [ ] Right-click shows 打開面板／紀錄／設定／結束; each item works.
 - [ ] Ctrl+Alt+P opens / hides the panel. If another app owns Ctrl+Alt+P, the settings window explains it in red.
 - [ ] Hourly and 12-hour notifications appear in the Action Center as 打工人計時器 with the texts 「已計時 N 小時・專案名」 / 「是不是忘了停？已計時 12 小時・專案名」, once each (see the macOS items for the rules). With notifications turned off for the app, nothing breaks.
-- [ ] Chinese IME while timing — Microsoft Bopomofo (注音), Microsoft Changjie (倉頡) and Microsoft Pinyin (拼音): type a sentence in 標題 and several lines in 內容 for at least a minute (past a minute change of the clock). The candidate window never closes by itself, no characters are lost or duplicated, the caret does not jump. Press Ctrl+S while composing: nothing happens until you commit. Click STOP with an uncommitted composition: the entry has the committed text.
+- [ ] Chinese IME while timing — Microsoft Bopomofo (注音), Microsoft Changjie (倉頡) and Microsoft Pinyin (拼音): type a sentence in 標題 and several lines in 內容 for at least a minute (past a minute change of the clock). The candidate window never closes by itself, no characters are lost or duplicated, the caret does not jump. Press Ctrl+S while composing: nothing happens until you commit. 中文輸入模式下按 Ctrl+S (IME switched on, nothing being composed): it saves. Click STOP with an uncommitted composition: the entry has the committed text.
 
 ## Ubuntu
 
@@ -47,7 +47,7 @@
 - [ ] X11 session: Ctrl+Alt+P opens / hides the panel, and the settings window shows no red text.
 - [ ] Wayland session (Ubuntu default): the settings window shows the red text about Wayland and the custom-shortcut steps; a custom shortcut in 設定 → 鍵盤 → 檢視及自訂快捷鍵 → 自訂快捷鍵 running `partimer` opens the panel.
 - [ ] Hourly and 12-hour notifications appear in GNOME's notification list as 打工人計時器 with the texts above, once each. (Checked headless only: one D-Bus Notify call each, title 打工人計時器, bodies 「是不是忘了停？已計時 12 小時・官網改版」 and 「已計時 12 小時・官網改版」.)
-- [ ] Chinese IME while timing — IBus (or Fcitx 5) with 注音 (Chewing), 倉頡 (Cangjie table) and 拼音 (libpinyin): type a sentence in 標題 and several lines in 內容 for at least a minute (past a minute change of the clock). The candidate window never closes by itself, no characters are lost or duplicated, the caret does not jump. Press Ctrl+S while composing: nothing happens until you commit. Click STOP with an uncommitted composition: the entry has the committed text. Note whether the app runs under XWayland (default) and whether the IME works there.
+- [ ] Chinese IME while timing — IBus (or Fcitx 5) with 注音 (Chewing), 倉頡 (Cangjie table) and 拼音 (libpinyin): type a sentence in 標題 and several lines in 內容 for at least a minute (past a minute change of the clock). The candidate window never closes by itself, no characters are lost or duplicated, the caret does not jump. Press Ctrl+S while composing: nothing happens until you commit. 中文輸入模式下按 Ctrl+S (IME switched on, nothing being composed): it saves. Click STOP with an uncommitted composition: the entry has the committed text. Note whether the app runs under XWayland (default) and whether the IME works there.
 
 ## Punch panel (do every item on macOS, Windows and Ubuntu)
 
@@ -58,7 +58,7 @@ Set-up: create at least two clients with two projects each (one with a few entri
 - [ ] Not timing, switching the project: the title changes to that project's latest title; text already typed in 內容 stays.
 - [ ] START with a title and two content lines: the clock starts at 0:00:00 and counts every second; the save row (儲存 + 已儲存 + Ctrl+S / ⌘S) and PAUSE appear left of STOP; the new entry is at the top of 今日紀錄 with 「計時中」 and the same text (lines starting with 「- 」 shown as bullets).
 - [ ] While timing, type in 標題 and 內容: the label changes to 「尚未儲存」 as soon as the text differs from the saved entry and back to 「已儲存」 if you undo the change. Nothing is written to `data.json` while typing (check its modification time).
-- [ ] Ctrl+S (Windows/Ubuntu) or ⌘S (macOS) while typing: the label becomes 「已儲存」, the caret stays where it was and you can keep typing without clicking. The 儲存 button does the same. When not timing, Ctrl+S / ⌘S does nothing (no browser "save page" dialog).
+- [ ] Ctrl+S (Windows/Ubuntu) or ⌘S (macOS) while typing: the label becomes 「已儲存」, the caret stays where it was and you can keep typing without clicking. The 儲存 button does the same. When not timing, Ctrl+S / ⌘S does nothing (no browser "save page" dialog). Known limit: keys typed during the split second the save runs may be dropped (the fields stop syncing while a command runs); note it if you ever notice lost characters.
 - [ ] STOP: the entry ends and keeps exactly the text in the fields (open it in 紀錄 to compare). The title goes back to that same title, 內容 is empty. Then START again without typing: the new entry has the title and **empty** content — no text of the previous entry.
 - [ ] Double-click STOP as fast as you can (also: press STOP and the global shortcut together): only one STOP line in `activity.log`, no extra or empty entry, the next draft is intact.
 - [ ] PAUSE: the clock stops and greys out with ⏸ in front (check the ⏸ glyph renders, not a box or bar); the entry shows 「暫停中」; RESUME continues from the same value. STOP while paused ends the entry at the moment PAUSE was pressed.

@@ -147,8 +147,13 @@ impl<F: Fs> Session<F> {
         }
     }
 
-    /// Memory only: never writes the file and keeps the generation.
-    pub fn set_draft(&mut self, title: String, content: String) {
+    /// Memory only: never writes the file and keeps the generation. `generation` is the one
+    /// the caller's fields were built from; a sync from fields that were since replaced (e.g.
+    /// arriving after STOP) is ignored, so old text never becomes the next entry's draft.
+    pub fn set_draft(&mut self, title: String, content: String, generation: u64) {
+        if generation != self.draft.generation {
+            return;
+        }
         self.draft.title = title;
         self.draft.content = content;
     }
@@ -184,7 +189,8 @@ impl<F: Fs> Session<F> {
         e.title = title.to_string();
         e.content = content.to_string();
         let id = e.id.clone();
-        self.set_draft(title.to_string(), content.to_string());
+        self.draft.title = title.to_string();
+        self.draft.content = content.to_string();
         self.notices
             .retain(|n| n.kind != NoticeKind::EditedElsewhere);
         self.log_entry(now, Action::Save, &id);
