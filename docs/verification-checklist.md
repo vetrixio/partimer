@@ -73,3 +73,20 @@ Set-up: create at least two clients with two projects each (one with a few entri
 - [ ] Notices: orange notices (e.g. restored from backup, 「這筆已在紀錄視窗被修改…」) have a × that removes them. Save errors / unreadable or corrupt data file are red and have no ×. (Unreadable checked headless only: red, no ×.)
 - [ ] Footer: 紀錄 and 設定 open those windows; 結束 app quits, and text typed but not saved while timing is in the entry after restart.
 - [ ] Dark mode (system setting): the panel switches to the dark palette and all text stays readable.
+
+## Records window (do every item on macOS, Windows and Ubuntu)
+
+Set-up: a few entries this month and last month across two clients, one entry that crosses midnight, one with a pause, one running.
+
+- [ ] Opening 紀錄 (tray menu, panel footer) shows this month, 全部客戶, 全部專案. ‹ › and 本月 change the month. Picking a client empties the project menu to that client's projects and resets it to 全部專案. Deleting the client/project you filter on in 設定 while 紀錄 is open resets the filter instead of showing an empty list. (Checked headless only: default view and layout on Xvfb.)
+- [ ] 左欄 shows the month total and every project subtotal both as 「1h 10m」 and 「1.17 小時」; the running entry is not included until it ends (same numbers as the CSV).
+- [ ] 右欄: newest day first, newest entry first within a day. An entry from 23:30 to 00:30 sits under the day it started. Paused-before entries show small 「另暫停 20m」; the running entry shows 「計時中」 (「暫停中」 when paused) and its duration counts up every second. Content is complete (no cut-off) and lines starting with 「- 」 are bullets. (Checked headless only: all of this, with seeded data.)
+- [ ] Click an entry: the editor opens with that entry's values. Changing 專案, 開始, 結束, 暫停分鐘數, 標題, 內容 and 儲存 updates the list and the totals. Esc or 取消 closes without saving.
+- [ ] Editor validation: an end before the start, a negative pause, a pause longer than the entry, and a start/end that does not exist (spring-forward gap) each show the Chinese message inside the dialog in red; the dialog stays open with everything you typed.
+- [ ] A running entry shows 「仍在計時」 in the editor (other entries do not). With it on, 結束 is greyed out; turning it off fills in the current time.
+- [ ] 刪除 asks 「確定刪除這筆紀錄？」 in front of the window; 取消 keeps the entry, 確定 removes it.
+- [ ] 新增紀錄 opens an empty editor (start one hour ago, end now, the selected project); a saved entry appears under the right day.
+- [ ] While the editor is open, start/stop a timer from the panel: the list behind refreshes, the text you were typing in the editor is untouched.
+- [ ] Click an entry in the panel's 今日紀錄: the records window opens (also when it was not open yet) on that entry's month with the editor showing it. Do it again with the records window already open on another month.
+- [ ] 匯出 CSV: a save dialog proposes partimer-YYYY-MM.csv; the file contains the filtered month. `head -c 3 <file> | xxd` shows `efbb bf`. Opening it in Excel (Windows and macOS) shows the Chinese correctly. Cancelling the dialog leaves no message.
+- [ ] Dark mode: the window and the editor stay readable.

@@ -205,6 +205,8 @@ export const api = {
 
   // records
   getRecords: (query: RecordsQuery) => invoke<RecordsView>("get_records", { query }),
+  /** The entry the window was opened for, once; call after registering the open-entry listener. */
+  takePendingEntry: () => invoke<Id | null>("take_pending_entry"),
   getEntryForm: (id: Id | null) => invoke<EntryForm>("get_entry_form", { id }),
   saveEntry: (id: Id | null, form: EntryForm) => invoke<void>("save_entry", { id, form }),
   deleteEntry: (id: Id) => invoke<void>("delete_entry", { id }),

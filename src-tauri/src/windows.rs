@@ -6,8 +6,10 @@
 
 use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, Monitor, PhysicalPosition, PhysicalRect,
-    PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder, webview::PageLoadEvent,
+    PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
+
+use crate::AppState;
 
 pub const PANEL: &str = "panel";
 pub const RECORDS: &str = "records";
@@ -50,9 +52,13 @@ pub fn toggle_panel(app: &AppHandle, origin: Origin) {
     });
 }
 
-/// Open (or focus) the records window; with `entry_id`, tell it to open that entry.
+/// Open (or focus) the records window; with `entry_id`, have it open that entry.
+///
+/// The id is parked in `AppState::pending_entry` (a fresh window takes it on mount, after its
+/// listener exists) and also emitted for a window that is already running.
 pub fn open_records(app: &AppHandle, entry_id: Option<String>) {
     on_worker(app, move |app| {
+        *crate::lock(&app.state::<AppState>().pending_entry) = entry_id.clone();
         if let Some(w) = app.get_webview_window(RECORDS) {
             focus(&w)?;
             if let Some(id) = entry_id {
@@ -63,14 +69,6 @@ pub fn open_records(app: &AppHandle, entry_id: Option<String>) {
         WebviewWindowBuilder::new(app, RECORDS, WebviewUrl::App("index.html".into()))
             .title("紀錄 — 打工人計時器")
             .inner_size(900.0, 640.0)
-            .on_page_load(move |w, payload| {
-                if payload.event() == PageLoadEvent::Finished
-                    && let Some(id) = entry_id.clone()
-                    && let Err(e) = w.emit_to(RECORDS, "open-entry", Some(id))
-                {
-                    eprintln!("partimer: open-entry: {e}");
-                }
-            })
             .build()?;
         Ok(())
     });

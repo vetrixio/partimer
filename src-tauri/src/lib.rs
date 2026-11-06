@@ -21,6 +21,14 @@ pub struct AppState {
     pub session: Mutex<Session<RealFs>>,
     pub shortcut: Mutex<ShortcutStatus>,
     pub autostart_error: Mutex<Option<String>>,
+    /// Entry the records window should open on load. The `open-entry` event can fire before a
+    /// new window has registered its listener, so the window also asks for it on mount.
+    pub pending_entry: Mutex<Option<String>>,
+}
+
+/// Return and clear the pending entry id.
+pub fn take_pending(slot: &Mutex<Option<String>>) -> Option<String> {
+    lock(slot).take()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -99,6 +107,7 @@ pub fn run() {
                     wayland: platform::is_wayland_session(),
                 }),
                 autostart_error: Mutex::new(None),
+                pending_entry: Mutex::new(None),
             });
             // Without a tray the app is still reachable through the shortcut and a second
             // launch, so a missing indicator service must not stop it from starting.
@@ -133,6 +142,7 @@ pub fn run() {
             commands::snooze_long_running,
             commands::dismiss_notice,
             commands::get_records,
+            commands::take_pending_entry,
             commands::get_entry_form,
             commands::save_entry,
             commands::delete_entry,
@@ -203,6 +213,13 @@ fn register_shortcut(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn take_pending_returns_once_then_clears() {
+        let slot = Mutex::new(Some("e1".to_string()));
+        assert_eq!(take_pending(&slot), Some("e1".to_string()));
+        assert_eq!(take_pending(&slot), None);
+    }
 
     #[test]
     fn system_data_dir_is_used_when_available() {

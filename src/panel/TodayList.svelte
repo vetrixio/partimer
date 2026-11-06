@@ -5,7 +5,7 @@
 <script lang="ts">
   import type { EntryView, Id } from "../lib/api";
   import { colorOf } from "../lib/colors";
-  import { contentBlocks } from "../lib/content";
+  import ContentText from "../lib/ContentText.svelte";
   import { formatHms } from "../lib/time";
 
   interface Props {
@@ -62,17 +62,7 @@
                 </span>
                 <span class="title">{e.title || "（無標題）"}</span>
                 <span class="project">{e.clientName}・{e.projectName}</span>
-                {#each contentBlocks(e.content) as block, i (i)}
-                  {#if block.kind === "list"}
-                    <ul class="bullets">
-                      {#each block.items as item, j (j)}
-                        <li>{item}</li>
-                      {/each}
-                    </ul>
-                  {:else}
-                    <p class="para">{block.text}</p>
-                  {/if}
-                {/each}
+                <ContentText content={e.content} />
               </div>
             </li>
           {/each}
@@ -154,19 +144,6 @@
   .project {
     font-size: 0.85em;
     color: var(--muted);
-  }
-  .bullets {
-    margin: 2px 0 0;
-    padding-left: 1.2em;
-  }
-  .bullets,
-  .para {
-    font-size: 0.9em;
-    overflow-wrap: anywhere;
-    white-space: pre-wrap;
-  }
-  .para {
-    margin: 2px 0 0;
   }
   .total {
     margin: 6px 0 0;

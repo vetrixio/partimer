@@ -191,6 +191,12 @@ pub fn get_records(state: State<'_, AppState>, query: RecordsQuery) -> RecordsVi
     session(&state).records(query, Utc::now())
 }
 
+/// The entry the records window was opened for, once (see `AppState::pending_entry`).
+#[tauri::command]
+pub fn take_pending_entry(state: State<'_, AppState>) -> Option<String> {
+    crate::take_pending(&state.pending_entry)
+}
+
 #[tauri::command]
 pub fn get_entry_form(state: State<'_, AppState>, id: Option<String>) -> Res<EntryForm> {
     let s = session(&state);

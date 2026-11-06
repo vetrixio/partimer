@@ -46,3 +46,9 @@ export function addHoursLocal(local: string, hours: number): string | null {
   const start = new Date(y, mo - 1, d, h, mi);
   return toLocalInput(new Date(start.getTime() + hours * 3_600_000));
 }
+
+/** Minutes as the backend's `format_hm`: `20m`, `1h 5m`. */
+export function formatMinutes(minutes: number): string {
+  const m = Math.max(0, Math.floor(minutes));
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
