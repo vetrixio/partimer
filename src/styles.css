@@ -1,0 +1,36 @@
+:root {
+  color-scheme: light dark;
+  --bg: #fdf8f3;
+  --fg: #3b2f2a;
+  --accent: #e48a5a;
+  --leaf: #7cc35b;
+  font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC",
+    "Microsoft JhengHei", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #2a2522;
+    --fg: #f3ebe4;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+h1 {
+  font-size: 1.25rem;
+  margin: 0;
+  padding: 16px;
+}

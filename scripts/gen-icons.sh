@@ -10,11 +10,12 @@ TRAY_SIZES=(16 32 64)
 
 # App icons (icns/ico/png set) -> src-tauri/icons/
 npm exec --no -- tauri icon assets/design/plant.svg -o src-tauri/icons
+# Desktop-only app: drop the mobile icon sets the CLI also writes.
+rm -rf src-tauri/icons/android src-tauri/icons/ios
 
-# Tray PNGs. NOTE: `tauri icon --png <sizes>` takes a comma-separated list of
-# pixel sizes and writes <size>x<size>.png into the output dir (plus the usual
-# icon set, which we discard). If the flag/output naming differs in the pinned
-# CLI version, adjust here (Task 11 runs this for the first time).
+# Tray PNGs. `tauri icon --png <sizes>` takes a comma-separated list of pixel
+# sizes and writes only <size>x<size>.png into the output dir (verified with
+# @tauri-apps/cli 2.12.4: with --png the default icon set is not generated).
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p src-tauri/icons/tray

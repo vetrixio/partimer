@@ -1,0 +1,23 @@
+[package]
+name = "partimer"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "partimer_lib"
+
+[build-dependencies]
+tauri-build = { version = "=2.7.4", features = [] }
+
+[dependencies]
+partimer-core = { path = "../crates/partimer-core" }
+tauri = { version = "=2.12.5", features = ["macos-private-api"] }
+tauri-plugin-single-instance = "=2.5.5"
+tauri-plugin-global-shortcut = "=2.4.1"
+tauri-plugin-autostart = "=2.7.0"
+tauri-plugin-dialog = "=2.8.4"
+tauri-plugin-notification = "=2.8.0"
+tauri-plugin-opener = "=2.7.2"
+serde = { version = "=1.0.229", features = ["derive"] }
+chrono = { version = "=0.4.45", default-features = false, features = ["std", "clock"] }
