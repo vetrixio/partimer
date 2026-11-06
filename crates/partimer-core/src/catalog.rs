@@ -19,7 +19,8 @@ pub enum CatalogError {
     NotFound,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeletionImpact {
     pub entry_count: usize,
     pub total_minutes: i64,
