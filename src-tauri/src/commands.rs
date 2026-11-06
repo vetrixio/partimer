@@ -40,7 +40,7 @@ fn session<'a>(state: &'a State<'_, AppState>) -> MutexGuard<'a, Session<RealFs>
     crate::lock(&state.session)
 }
 
-fn changed(app: &AppHandle) {
+pub(crate) fn changed(app: &AppHandle) {
     if let Err(e) = app.emit(STATE_CHANGED, ()) {
         eprintln!("partimer: emit {STATE_CHANGED}: {e}");
     }
@@ -370,7 +370,7 @@ fn settings_view(app: &AppHandle, state: &State<'_, AppState>) -> SettingsView {
         widget,
         hourly_reminder,
         shortcut: crate::lock(&state.shortcut).clone(),
-        shortcut_help: None,
+        shortcut_help: platform::shortcut_help(),
         data_dir,
     }
 }

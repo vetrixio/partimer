@@ -22,6 +22,9 @@ const PANEL_HEIGHT: f64 = 480.0;
 pub enum Origin {
     /// Tray icon click, with the icon's rectangle in physical pixels.
     Tray(PhysicalRect<i32, u32>),
+    /// Tray menu without a known icon position (Linux AppIndicator never reports it):
+    /// top-right corner of the main screen.
+    TrayMenu,
     Shortcut,
     SecondInstance,
     Widget,
@@ -144,6 +147,9 @@ fn panel_position(
             };
             monitor.map(|m| tray_position(tray, size, monitor_rect(&m), *m.work_area()))
         }
+        Origin::TrayMenu => app
+            .primary_monitor()?
+            .map(|m| top_right_position(*m.work_area(), size)),
         Origin::Shortcut | Origin::SecondInstance | Origin::Widget => app
             .primary_monitor()?
             .map(|m| upper_center_position(*m.work_area(), size)),
@@ -211,6 +217,19 @@ fn upper_center_position(
     clamp_into(PhysicalPosition::new(x, y), panel, work_area)
 }
 
+/// Top-right corner of the work area (under a top bar, beside the indicator area).
+fn top_right_position(
+    work_area: PhysicalRect<i32, u32>,
+    panel: PhysicalSize<u32>,
+) -> PhysicalPosition<i32> {
+    let x = work_area.position.x + work_area.size.width as i32 - panel.width as i32;
+    clamp_into(
+        PhysicalPosition::new(x, work_area.position.y),
+        panel,
+        work_area,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,6 +284,15 @@ mod tests {
         assert_eq!(pos, PhysicalPosition::new(780, 208));
         let offset = upper_center_position(rect(-1280, 100, 1280, 1000), PANEL_SIZE);
         assert_eq!(offset, PhysicalPosition::new(-1280 + 460, 300));
+    }
+
+    #[test]
+    fn top_right_sits_in_the_work_area_corner() {
+        // Ubuntu: top bar 32px, so the work area starts at y=32.
+        let pos = top_right_position(rect(0, 32, 1920, 1048), PANEL_SIZE);
+        assert_eq!(pos, PhysicalPosition::new(1920 - 360, 32));
+        let offset = top_right_position(rect(1920, 0, 1280, 1024), PANEL_SIZE);
+        assert_eq!(offset, PhysicalPosition::new(1920 + 1280 - 360, 0));
     }
 
     #[test]

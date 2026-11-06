@@ -2,6 +2,8 @@
 
 mod commands;
 pub mod platform;
+mod ticker;
+mod tray;
 pub mod windows;
 
 use std::path::PathBuf;
@@ -10,7 +12,8 @@ use std::sync::{Mutex, MutexGuard};
 use chrono::Utc;
 use partimer_core::{NoticeKind, Paths, RealFs, Session, SystemZone, default_dir};
 use serde::Serialize;
-use tauri::{Manager, RunEvent, WindowEvent};
+use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 use crate::windows::Origin;
 
@@ -34,6 +37,9 @@ pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 const DATA_DIR_FALLBACK: &str = "partimer-data";
+
+/// Ctrl+Alt+P everywhere; on macOS this is Ctrl+Option+P.
+const SHORTCUT: &str = "Ctrl+Alt+P";
 
 /// The data folder, or `<exe dir>/partimer-data` when the system has no data folder.
 /// Returns whether the fallback was used, so the panel can say where the data went.
@@ -88,12 +94,19 @@ pub fn run() {
             app.manage(AppState {
                 session: Mutex::new(open_session()),
                 shortcut: Mutex::new(ShortcutStatus {
-                    accelerator: "Ctrl+Alt+P".into(),
+                    accelerator: SHORTCUT.into(),
                     registered: false,
-                    wayland: false,
+                    wayland: platform::is_wayland_session(),
                 }),
                 autostart_error: Mutex::new(None),
             });
+            // Without a tray the app is still reachable through the shortcut and a second
+            // launch, so a missing indicator service must not stop it from starting.
+            if let Err(e) = tray::build(app.handle()) {
+                eprintln!("partimer: cannot create the tray icon: {e}");
+            }
+            register_shortcut(app.handle());
+            ticker::spawn(app.handle());
             windows::ensure_widget(app.handle());
             Ok(())
         })
@@ -151,16 +164,40 @@ pub fn run() {
                 api.prevent_exit();
                 return;
             }
-            if let Some(state) = app.try_state::<AppState>() {
-                lock(&state.session).flush_on_exit(Utc::now());
-            }
+            flush(app);
         }
+        // An OS-initiated quit (e.g. macOS logout) ends the loop without ExitRequested.
+        // After an ExitRequested flush this second one finds nothing left to save.
+        RunEvent::Exit => flush(app),
         // macOS does not start a second process when a running app is opened again; it
         // sends "reopen" to the running one instead.
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => windows::show_panel(app, Origin::SecondInstance),
         _ => {}
     });
+}
+
+/// Save the unsaved draft and anything still pending before the process ends.
+fn flush(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        lock(&state.session).flush_on_exit(Utc::now());
+    }
+}
+
+/// Register the global shortcut and record the result for the settings window. On Wayland
+/// `registered` still holds the real result; the settings window goes by `wayland`.
+fn register_shortcut(app: &AppHandle) {
+    let result = app
+        .global_shortcut()
+        .on_shortcut(SHORTCUT, |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                windows::toggle_panel(app, Origin::Shortcut);
+            }
+        });
+    if let Err(e) = &result {
+        eprintln!("partimer: cannot register {SHORTCUT}: {e}");
+    }
+    lock(&app.state::<AppState>().shortcut).registered = result.is_ok();
 }
 
 #[cfg(test)]
