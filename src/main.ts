@@ -15,6 +15,8 @@ const views: Record<string, Component> = {
 };
 
 const label = getCurrentWebviewWindow().label;
+// Lets styles.css target one window (e.g. the panel never shows a page scrollbar).
+document.documentElement.dataset.window = label;
 const view = views[label];
 const target = document.getElementById("app");
 if (view && target) {

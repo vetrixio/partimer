@@ -17,6 +17,7 @@
 - [ ] Hourly reminder on (settings): each full hour of running time shows 「已計時 N 小時・專案名」 once; nothing while paused; reopening the app after hours of running does not send a backlog.
 - [ ] 12-hour reminder: after 12 h of effective time (e.g. lid closed overnight) one notification 「是不是忘了停？已計時 12 小時・專案名」, not repeated every second; after 「沒忘，繼續計時」 the next one comes at 24 h.
 - [ ] Logging out / shutting down while timing keeps the unsaved title/content (OS quit path without the menu).
+- [ ] Chinese IME while timing — 注音 (Zhuyin/Bopomofo), 倉頡 (Cangjie) and 拼音 (Pinyin – Simplified or Traditional): type a sentence in 標題 and several lines in 內容 for at least a minute (past a minute change of the clock). The candidate window never closes by itself, no characters are lost or duplicated, the caret does not jump. Press ⌘S while a candidate window is open: nothing happens until you commit. Commit, then click STOP with the candidate window still open: the entry has the committed text.
 
 ## Windows
 
@@ -31,13 +32,14 @@
 - [ ] Right-click shows 打開面板／紀錄／設定／結束; each item works.
 - [ ] Ctrl+Alt+P opens / hides the panel. If another app owns Ctrl+Alt+P, the settings window explains it in red.
 - [ ] Hourly and 12-hour notifications appear in the Action Center as 打工人計時器 with the texts 「已計時 N 小時・專案名」 / 「是不是忘了停？已計時 12 小時・專案名」, once each (see the macOS items for the rules). With notifications turned off for the app, nothing breaks.
+- [ ] Chinese IME while timing — Microsoft Bopomofo (注音), Microsoft Changjie (倉頡) and Microsoft Pinyin (拼音): type a sentence in 標題 and several lines in 內容 for at least a minute (past a minute change of the clock). The candidate window never closes by itself, no characters are lost or duplicated, the caret does not jump. Press Ctrl+S while composing: nothing happens until you commit. Click STOP with an uncommitted composition: the entry has the committed text.
 
 ## Ubuntu
 
 - [ ] Tray icon is clear in the Ubuntu top bar / indicator area (light and dark themes).
 - [ ] Launching `partimer` opens no window; the process keeps running (`pgrep -x partimer`).
 - [ ] The app list shows 「打工人計時器」; the terminal command is `partimer`.
-- [ ] Running `partimer` again shows the punch panel near the top centre of the main screen, on top and focused (checked headless under Xvfb only: panel 360×480 at 20% from the top, centred).
+- [ ] Running `partimer` again shows the punch panel near the top centre of the main screen, on top and focused (checked headless under Xvfb only: panel 360 wide at 20% from the top, centred; its height follows the content, e.g. 360×595 with one entry today).
 - [ ] Closing the records / settings window leaves the app running.
 - [ ] Tray (AppIndicator): resting plant when not timing; awake plant swaying while timing; resting plant while paused. (Checked headless only: the item is exported on D-Bus and sends a new icon every 0.5 s while running, none while paused.)
 - [ ] Next to the icon the time shows as `1:23` / `⏸ 0:47` where the desktop supports indicator labels (GNOME's AppIndicator extension may not; note what you see). (Checked headless only: label `  11:59` → `  12:00`, `  ⏸ 0:47`.)
@@ -45,3 +47,29 @@
 - [ ] X11 session: Ctrl+Alt+P opens / hides the panel, and the settings window shows no red text.
 - [ ] Wayland session (Ubuntu default): the settings window shows the red text about Wayland and the custom-shortcut steps; a custom shortcut in 設定 → 鍵盤 → 檢視及自訂快捷鍵 → 自訂快捷鍵 running `partimer` opens the panel.
 - [ ] Hourly and 12-hour notifications appear in GNOME's notification list as 打工人計時器 with the texts above, once each. (Checked headless only: one D-Bus Notify call each, title 打工人計時器, bodies 「是不是忘了停？已計時 12 小時・官網改版」 and 「已計時 12 小時・官網改版」.)
+- [ ] Chinese IME while timing — IBus (or Fcitx 5) with 注音 (Chewing), 倉頡 (Cangjie table) and 拼音 (libpinyin): type a sentence in 標題 and several lines in 內容 for at least a minute (past a minute change of the clock). The candidate window never closes by itself, no characters are lost or duplicated, the caret does not jump. Press Ctrl+S while composing: nothing happens until you commit. Click STOP with an uncommitted composition: the entry has the committed text. Note whether the app runs under XWayland (default) and whether the IME works there.
+
+## Punch panel (do every item on macOS, Windows and Ubuntu)
+
+Set-up: create at least two clients with two projects each (one with a few entries today). Write the platform next to any item that fails.
+
+- [ ] First launch with no data: the panel shows only the add form (客戶名、專案名、建立) where the project menu would be. 建立 with empty names shows the error in red under the form. Creating 「客戶甲／官網改版」 replaces the form with the menu, the colour dot left of it, and START becomes enabled.
+- [ ] Project menu: projects are grouped under their client names; archived projects are not listed; the last item is 「＋ 新增專案…」. The colour dot sits left of the menu (never inside the options) and changes colour with the selected project. Typing an existing client name (with extra spaces) in the add form puts the new project under that client instead of a second client with the same name.
+- [ ] Not timing, switching the project: the title changes to that project's latest title; text already typed in 內容 stays.
+- [ ] START with a title and two content lines: the clock starts at 0:00:00 and counts every second; the save row (儲存 + 已儲存 + Ctrl+S / ⌘S) and PAUSE appear left of STOP; the new entry is at the top of 今日紀錄 with 「計時中」 and the same text (lines starting with 「- 」 shown as bullets).
+- [ ] While timing, type in 標題 and 內容: the label changes to 「尚未儲存」 as soon as the text differs from the saved entry and back to 「已儲存」 if you undo the change. Nothing is written to `data.json` while typing (check its modification time).
+- [ ] Ctrl+S (Windows/Ubuntu) or ⌘S (macOS) while typing: the label becomes 「已儲存」, the caret stays where it was and you can keep typing without clicking. The 儲存 button does the same. When not timing, Ctrl+S / ⌘S does nothing (no browser "save page" dialog).
+- [ ] STOP: the entry ends and keeps exactly the text in the fields (open it in 紀錄 to compare). The title goes back to that same title, 內容 is empty. Then START again without typing: the new entry has the title and **empty** content — no text of the previous entry.
+- [ ] Double-click STOP as fast as you can (also: press STOP and the global shortcut together): only one STOP line in `activity.log`, no extra or empty entry, the next draft is intact.
+- [ ] PAUSE: the clock stops and greys out with ⏸ in front (check the ⏸ glyph renders, not a box or bar); the entry shows 「暫停中」; RESUME continues from the same value. STOP while paused ends the entry at the moment PAUSE was pressed.
+- [ ] Switching the project while timing: the question 「結束目前這筆，改記另一個專案？」 appears **in front of** the panel. 取消 → the menu shows the old project again and nothing changes. 結束並切換 → the old entry ends with the text from the fields, the new project starts immediately with its latest title and empty content. Same while paused (old entry ends at the pause moment). Choosing 「＋ 新增專案…」 and creating a project while timing asks the same question.
+- [ ] Height: the panel grows when the save row appears, when a notice appears and with each entry in 今日紀錄, and shrinks after STOP / dismissing a notice. Buttons and the footer (紀錄、設定、結束 app) are never cut off. With many entries today the panel stops 40 px short of the screen's usable height and only 今日紀錄 scrolls (今日總計 and the footer stay visible). The panel never opens as 0×0 or as a sliver.
+- [ ] Opened from the tray icon at the bottom of the screen (Windows taskbar): when the panel grows it moves up instead of disappearing behind the taskbar.
+- [ ] Hide and show again (Esc, the global shortcut, the tray icon): the half-typed title and content are still there, and an IME candidate window does not hide the panel. Clicking another app does not hide the panel (no auto-hide by design).
+- [ ] Esc while an IME is composing (candidate window open) only cancels the composition; the panel stays. A second Esc hides it.
+- [ ] 今日紀錄: entries started today, newest first, plus the running one even if it started yesterday (start a timer before midnight and check after midnight). Each shows start–end (or 計時中／暫停中), title (or （無標題）), 客戶・專案, duration; content lines starting with 「- 」 are bullets. 今日總計 includes the running entry and counts up every second. Clicking an entry opens the records window on that entry.
+- [ ] Leave the panel open (not timing) across midnight, or hide it before midnight and open it after: 今日紀錄 shows the new day's entries and 今日總計 restarts.
+- [ ] 12-hour prompt (e.g. set the clock or run a timer overnight): the panel shows 「已經計時超過 12 小時，是不是忘了停？」 with a date-time field preset to start + 12 h; 用這個時間結束 ends the entry at that time (check in 紀錄) with the text from the fields; a time in the future shows 「結束時間不能晚於現在」. 沒忘，繼續計時 hides the prompt until 24 h.
+- [ ] Notices: orange notices (e.g. restored from backup, 「這筆已在紀錄視窗被修改…」) have a × that removes them. Save errors / unreadable or corrupt data file are red and have no ×. (Unreadable checked headless only: red, no ×.)
+- [ ] Footer: 紀錄 and 設定 open those windows; 結束 app quits, and text typed but not saved while timing is in the entry after restart.
+- [ ] Dark mode (system setting): the panel switches to the dark palette and all text stays readable.

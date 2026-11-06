@@ -2,8 +2,21 @@
   color-scheme: light dark;
   --bg: #fdf8f3;
   --fg: #3b2f2a;
+  --muted: #8a7a70;
+  --line: #eadfd5;
+  --surface: #fffdfb;
+  --field: #ffffff;
   --accent: #e48a5a;
+  --accent-strong: #c4673a;
+  --accent-fg: #ffffff;
   --leaf: #7cc35b;
+  --stop: #b9563a;
+  --notice-bg: #fff3e0;
+  --notice-line: #f3d3a8;
+  --danger: #d64545;
+  --danger-bg: #fdecec;
+  --danger-fg: #a12a2a;
+  --focus: #e48a5a;
   font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC",
     "Microsoft JhengHei", sans-serif;
   font-size: 14px;
@@ -16,6 +29,18 @@
   :root {
     --bg: #2a2522;
     --fg: #f3ebe4;
+    --muted: #b3a398;
+    --line: #4a403a;
+    --surface: #332d29;
+    --field: #3a332f;
+    --accent-strong: #f0a77d;
+    --accent-fg: #2a2522;
+    --stop: #e07a5c;
+    --notice-bg: #43382c;
+    --notice-line: #6b5537;
+    --danger: #ef7070;
+    --danger-bg: #4a2b2b;
+    --danger-fg: #ffc9c9;
   }
 }
 
@@ -29,8 +54,82 @@ body {
   margin: 0;
 }
 
+/* The panel sizes its window to its content; a page scrollbar would only steal width. */
+html[data-window="panel"],
+html[data-window="panel"] body {
+  overflow: hidden;
+}
+
 h1 {
   font-size: 1.25rem;
   margin: 0;
   padding: 16px;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+  color: inherit;
+}
+
+input,
+textarea,
+select {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--field);
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+button.stop {
+  background: var(--stop);
+  border-color: var(--stop);
+  color: #ffffff;
+}
+
+button.link {
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  color: var(--muted);
+}
+
+button.link:hover:not(:disabled) {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
+.error {
+  color: var(--danger);
+  overflow-wrap: anywhere;
 }
