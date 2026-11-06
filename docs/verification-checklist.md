@@ -64,6 +64,7 @@ Test on Windows 10 or 11 (note which).
 - [ ] **W11** Right-click shows 打開面板／紀錄／設定／結束; each item works.
 - [ ] **W12** Ctrl+Alt+P opens / hides the panel. If another app owns Ctrl+Alt+P, the settings window explains it in red.
 - [ ] **W13** Hourly and 12-hour notifications appear in the Action Center as 打工人計時器 with the texts 「已計時 N 小時・專案名」 / 「是不是忘了停？已計時 12 小時・專案名」, once each (rules: N1–N2 below). With notifications turned off for the app, nothing breaks.
+- [ ] **W19** Signing out of Windows, and separately shutting down / restarting, while timing with unsaved text typed in the panel (not saved with Ctrl+S): after signing in again the unsaved title/content is in the running entry (README says it is saved on Windows). Note what you saw for both.
 
 ### Floating clock (Windows)
 
@@ -88,6 +89,7 @@ Test on Ubuntu 24.04 or later in the default (Wayland) session, and the X11 item
 - [ ] **U4** The 「Ubuntu AppIndicators」 extension is on (Extensions app, or `gnome-extensions list --enabled | grep -i appindicator`); with it off, note what happens (no icon is expected; the app keeps running).
 - [ ] **U5** With 開機自動啟動 on, record the name shown in 「初始啟動程式」 / `~/.config/autostart/` (on Linux the internal name `partimer` is expected there).
 - [ ] **U6** `sudo apt remove partimer` removes the app-list entry and the `partimer` command; `~/.local/share/partimer/` is still there.
+- [ ] **U18** `grep Categories /usr/share/applications/partimer.desktop` shows a non-empty value (e.g. `Categories=Office;` from the bundle category Productivity), and the app appears under a sensible category in the app list.
 
 ### Start, tray and shortcut
 
@@ -100,6 +102,7 @@ Test on Ubuntu 24.04 or later in the default (Wayland) session, and the X11 item
 - [ ] **U13** X11 session: Ctrl+Alt+P opens / hides the panel, and the settings window shows no red text.
 - [ ] **U14** Wayland session (Ubuntu default): the settings window shows the red text about Wayland and the custom-shortcut steps; a custom shortcut in 設定 → 鍵盤 → 檢視及自訂快捷鍵 → 自訂快捷鍵 running `partimer` opens the panel.
 - [ ] **U15** Hourly and 12-hour notifications appear in GNOME's notification list as 打工人計時器 with the texts 「已計時 N 小時・專案名」 / 「是不是忘了停？已計時 12 小時・專案名」, once each (rules: N1–N2 below). (Checked headless only: one D-Bus Notify call each, title 打工人計時器, bodies 「是不是忘了停？已計時 12 小時・官網改版」 and 「已計時 12 小時・官網改版」.)
+- [ ] **U19** Logging out, and separately shutting down, while timing with unsaved text typed in the panel: note whether the unsaved title/content survives (README warns it may be lost on Ubuntu, because the session's SIGTERM is not handled). Then quit from the tray menu (結束) with unsaved text and log out: the text is in the entry after logging in again.
 
 ### Floating clock (Ubuntu)
 
@@ -116,6 +119,15 @@ Test on Ubuntu 24.04 or later in the default (Wayland) session, and the X11 item
   - [ ] Windows
   - [ ] Ubuntu
 - **A2** Window titles read 打工人計時器 (panel), 紀錄 — 打工人計時器 and 設定 — 打工人計時器 wherever the system shows them (title bar, Alt+Tab / Mission Control / the dock or app switcher). Note any place that shows `partimer` instead.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+
+- **A3** Data file from a newer version: quit, edit `data.json` and set `"version": 2`, start the app. The panel shows the red notice 「資料檔是由較新版本的打工人計時器建立的，為避免覆蓋，這次開啟期間的變更不會存檔。請改用較新的版本。」 without a close button; start/stop a timer, quit: `data.json` is unchanged (same bytes, still `"version": 2`) and no new file appeared in `backups/` today. Set the version back to 1 afterwards.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **A4** Broken item in the data file: quit, in `data.json` change one entry's `"start"` to `"x"`, start the app. The panel shows 「有 1 筆資料格式不正確，已另外保留在資料檔中，不會顯示在清單與合計裡。」 with a close button; the entry is not in the records window; after any change `data.json` has it under `quarantinedEntries`. `activity.log` has one `RESTORE` line with `note=quarantined=1`.
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
@@ -265,6 +277,26 @@ Set-up: a few entries this month and last month across two clients, one entry th
   - [ ] Windows
   - [ ] Ubuntu
 - **R12** Dark mode: the window and the editor stay readable.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **R13** CSV and Excel formulas: export a month containing an entry whose 內容 has 「- 」 bullet lines (e.g. 「- 改 banner」 / 「- 修 RWD」) and whose 標題 starts with 「=」 (e.g. 「=1+1」), plus a project named 「+專案」. Opening the CSV in Excel (Windows and macOS; on Ubuntu LibreOffice Calc) shows all of them as text exactly as typed — no `#NAME?`, no computed `2`, no visible extra character in front.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **R14** In the editor, type in 標題 with a Chinese IME and press Enter to confirm the composition: the text is committed and the dialog stays open (not saved, not closed). A second Enter with nothing being composed saves.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **R15** In the editor, type 1.5 (or -1) in 暫停分鐘數 and 儲存: the dialog shows 「暫停分鐘請填整數」 in red and stays open; nothing is saved. An empty field saves as 0.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **R16** While timing, type unsaved text in the panel's 內容 (do not press Ctrl+S), then in the records window turn 仍在計時 off for that entry and 儲存. The panel goes idle with the title kept and 內容 empty, and shows a notice with a close button quoting the unsaved text (「…原文：標題「…」，內容：…（請到紀錄視窗補寫）」). Press START: the new entry does not contain the old text.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **R17** While timing, type unsaved text in the panel, then edit the same entry's 內容 in the records window and 儲存: the panel shows 「這筆已在紀錄視窗被修改，面板上的文字尚未儲存」. Quit from the tray menu without pressing 儲存 and start again: the entry has the records-window text, not the panel text.
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
