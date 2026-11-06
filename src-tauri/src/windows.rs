@@ -4,12 +4,17 @@
 //! window from the main thread (sync commands, tray/menu handlers, plugin callbacks) deadlocks.
 //! So every caller can use them without thinking about which thread it is on.
 
+use std::sync::Mutex;
+
+use chrono::Utc;
 use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, Monitor, PhysicalPosition, PhysicalRect,
     PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 
-use crate::AppState;
+use partimer_core::TimerStatus;
+
+use crate::{AppState, lock, platform};
 
 pub const PANEL: &str = "panel";
 pub const RECORDS: &str = "records";
@@ -18,6 +23,17 @@ pub const WIDGET: &str = "widget";
 
 const PANEL_WIDTH: f64 = 360.0;
 const PANEL_HEIGHT: f64 = 480.0;
+
+/// The floating clock, in logical pixels.
+const WIDGET_WIDTH: f64 = 130.0;
+const WIDGET_HEIGHT: f64 = 40.0;
+/// Default place: this far from the primary screen's right and top edges (logical pixels).
+const WIDGET_MARGIN_RIGHT: f64 = 24.0;
+const WIDGET_MARGIN_TOP: f64 = 64.0;
+
+/// Serialises `ensure_widget` runs (the ticker and the settings window can ask at the same
+/// time), so two of them never both decide to create the window. Never held with the session.
+static WIDGET_OPS: Mutex<()> = Mutex::new(());
 
 /// Where the panel was asked to open from; decides where it is placed.
 #[derive(Debug, Clone, Copy)]
@@ -87,9 +103,16 @@ pub fn open_settings(app: &AppHandle) {
     });
 }
 
-/// Create/show/hide the floating clock to match settings and timer state. Filled in by the
-/// floating clock task; called at startup and whenever widget settings change.
-pub fn ensure_widget(_app: &AppHandle) {}
+/// Create or remove the floating clock to match the widget settings and the timer state.
+/// Called by the ticker on its first tick and whenever the status changes, and after the
+/// widget settings change.
+///
+/// "Hidden" means destroyed, not `hide()`: showing an existing window again activates it on
+/// Windows (`SW_SHOW`) and macOS (`makeKeyAndOrderFront`), which would take the focus away
+/// from whatever the user is typing in. A new window built with `focused(false)` does not.
+pub fn ensure_widget(app: &AppHandle) {
+    on_worker(app, ensure_widget_now);
+}
 
 fn on_worker(app: &AppHandle, f: impl FnOnce(&AppHandle) -> tauri::Result<()> + Send + 'static) {
     let app = app.clone();
@@ -98,6 +121,140 @@ fn on_worker(app: &AppHandle, f: impl FnOnce(&AppHandle) -> tauri::Result<()> + 
             eprintln!("partimer: window: {e}");
         }
     });
+}
+
+fn ensure_widget_now(app: &AppHandle) -> tauri::Result<()> {
+    let _ops = lock(&WIDGET_OPS);
+    let Some(state) = app.try_state::<AppState>() else {
+        return Ok(());
+    };
+    // Snapshot under the session lock, then let go before touching any window.
+    let (visible, saved) = {
+        let session = lock(&state.session);
+        let widget = &session.settings().widget;
+        let status = session.panel_state(Utc::now()).status;
+        let visible = widget_visible(
+            platform::widget_enabled(widget.enabled),
+            status,
+            widget.show_when_idle,
+        );
+        let saved = widget
+            .x
+            .zip(widget.y)
+            .map(|(x, y)| PhysicalPosition::new(x, y));
+        (visible, saved)
+    };
+    match (app.get_webview_window(WIDGET), visible) {
+        (Some(w), false) => w.destroy(),
+        (None, true) => build_widget(app, saved),
+        _ => Ok(()),
+    }
+}
+
+fn build_widget(app: &AppHandle, saved: Option<PhysicalPosition<i32>>) -> tauri::Result<()> {
+    let screens = app
+        .available_monitors()?
+        .iter()
+        .map(Screen::of)
+        .collect::<Vec<_>>();
+    let primary = app.primary_monitor()?.as_ref().map(Screen::of);
+    let mut builder = WebviewWindowBuilder::new(app, WIDGET, WebviewUrl::App("index.html".into()))
+        .title("打工人計時器")
+        .inner_size(WIDGET_WIDTH, WIDGET_HEIGHT)
+        // GTK makes a non-resizable window at least as big as the webview's natural size
+        // (200x200 seen under X11), so on Linux the window stays "resizable" and the equal
+        // min/max size hints keep it at 130x40 (window managers then offer no resizing).
+        .min_inner_size(WIDGET_WIDTH, WIDGET_HEIGHT)
+        .max_inner_size(WIDGET_WIDTH, WIDGET_HEIGHT)
+        .resizable(cfg!(target_os = "linux"))
+        .transparent(true)
+        .decorations(false)
+        .shadow(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .focused(false)
+        .visible_on_all_workspaces(true)
+        // macOS: the first click on the inactive clock reaches the page (toggles the panel)
+        // instead of only activating the window.
+        .accept_first_mouse(true);
+    if let Some((pos, scale)) = widget_position(saved, &screens, primary) {
+        // The builder takes logical pixels; dividing by the chosen screen's scale makes
+        // Windows (which converts with the DPI of the screen the point falls on) land on
+        // the same physical pixel.
+        builder = builder.position(pos.x as f64 / scale, pos.y as f64 / scale);
+    }
+    builder.build()?;
+    Ok(())
+}
+
+/// Whether the floating clock should be on screen: switched on, and timing (running or
+/// paused) unless the user asked to see it while idle too.
+fn widget_visible(enabled: bool, status: TimerStatus, show_when_idle: bool) -> bool {
+    enabled && (status != TimerStatus::Idle || show_when_idle)
+}
+
+/// A monitor as placement needs it: bounds in physical pixels and its scale factor.
+#[derive(Debug, Clone, Copy)]
+struct Screen {
+    rect: PhysicalRect<i32, u32>,
+    scale: f64,
+}
+
+impl Screen {
+    fn of(m: &Monitor) -> Self {
+        Self {
+            rect: monitor_rect(m),
+            scale: m.scale_factor(),
+        }
+    }
+
+    /// The widget's size in physical pixels on this screen.
+    fn widget_size(&self) -> (i64, i64) {
+        (
+            (WIDGET_WIDTH * self.scale).round() as i64,
+            (WIDGET_HEIGHT * self.scale).round() as i64,
+        )
+    }
+
+    /// Whether the whole widget at `pos` lies within this screen.
+    fn holds_widget_at(&self, pos: PhysicalPosition<i32>) -> bool {
+        let (w, h) = self.widget_size();
+        let (x, y) = (pos.x as i64, pos.y as i64);
+        let left = self.rect.position.x as i64;
+        let top = self.rect.position.y as i64;
+        x >= left
+            && y >= top
+            && x + w <= left + self.rect.size.width as i64
+            && y + h <= top + self.rect.size.height as i64
+    }
+
+    fn widget_top_right(&self) -> PhysicalPosition<i32> {
+        let from_right = ((WIDGET_MARGIN_RIGHT + WIDGET_WIDTH) * self.scale).round() as i32;
+        let from_top = (WIDGET_MARGIN_TOP * self.scale).round() as i32;
+        PhysicalPosition::new(
+            self.rect.position.x + self.rect.size.width as i32 - from_right,
+            self.rect.position.y + from_top,
+        )
+    }
+}
+
+/// Where the widget's top-left corner goes (physical pixels, like the saved `widget.x/y`
+/// that `widget_moved` stores from the window's `onMoved` event), with the scale of the
+/// screen it lands on. The saved position is kept only when the whole widget lies within one
+/// screen; otherwise top-right of the primary screen (or the first one when the system names
+/// no primary). `None` when there are no screens at all.
+fn widget_position(
+    saved: Option<PhysicalPosition<i32>>,
+    screens: &[Screen],
+    primary: Option<Screen>,
+) -> Option<(PhysicalPosition<i32>, f64)> {
+    if let Some(pos) = saved
+        && let Some(s) = screens.iter().find(|s| s.holds_widget_at(pos))
+    {
+        return Some((pos, s.scale));
+    }
+    let main = primary.or_else(|| screens.first().copied())?;
+    Some((main.widget_top_right(), main.scale))
 }
 
 fn focus(w: &WebviewWindow) -> tauri::Result<()> {
@@ -291,6 +448,134 @@ mod tests {
         assert_eq!(pos, PhysicalPosition::new(1920 - 360, 32));
         let offset = top_right_position(rect(1920, 0, 1280, 1024), PANEL_SIZE);
         assert_eq!(offset, PhysicalPosition::new(1920 + 1280 - 360, 0));
+    }
+
+    #[test]
+    fn widget_shows_only_when_enabled_and_timing_or_always_on() {
+        use TimerStatus::*;
+        for status in [Idle, Running, Paused] {
+            assert!(!widget_visible(false, status, false));
+            assert!(!widget_visible(false, status, true));
+        }
+        assert!(widget_visible(true, Running, false));
+        assert!(widget_visible(true, Paused, false));
+        assert!(!widget_visible(true, Idle, false));
+        assert!(widget_visible(true, Idle, true));
+    }
+
+    fn screen(x: i32, y: i32, w: u32, h: u32, scale: f64) -> Screen {
+        Screen {
+            rect: rect(x, y, w, h),
+            scale,
+        }
+    }
+
+    const MAIN: Screen = Screen {
+        rect: PhysicalRect {
+            position: PhysicalPosition::new(0, 0),
+            size: PhysicalSize::new(1920, 1080),
+        },
+        scale: 1.0,
+    };
+
+    #[test]
+    fn widget_without_saved_position_goes_top_right_of_primary() {
+        let pos = widget_position(None, &[MAIN], Some(MAIN));
+        assert_eq!(pos, Some((PhysicalPosition::new(1920 - 24 - 130, 64), 1.0)));
+    }
+
+    #[test]
+    fn widget_default_uses_logical_margins_on_hidpi_and_offset_primary() {
+        let hidpi = screen(0, 0, 3840, 2160, 2.0);
+        assert_eq!(
+            widget_position(None, &[hidpi], Some(hidpi)),
+            Some((PhysicalPosition::new(3840 - 48 - 260, 128), 2.0))
+        );
+        let offset = screen(-1280, 200, 1280, 1024, 1.25);
+        // 24 + 130 logical = 192.5 physical, 64 logical = 80 physical.
+        assert_eq!(
+            widget_position(None, &[MAIN, offset], Some(offset)),
+            Some((PhysicalPosition::new(-1280 + 1280 - 193, 280), 1.25))
+        );
+    }
+
+    #[test]
+    fn widget_keeps_a_saved_position_inside_any_screen() {
+        let left = screen(-2560, -200, 2560, 1440, 1.0);
+        let screens = [MAIN, left];
+        let saved = PhysicalPosition::new(100, 900);
+        assert_eq!(
+            widget_position(Some(saved), &screens, Some(MAIN)),
+            Some((saved, 1.0))
+        );
+        let on_left = PhysicalPosition::new(-2000, -150);
+        assert_eq!(
+            widget_position(Some(on_left), &screens, Some(MAIN)),
+            Some((on_left, 1.0))
+        );
+        // Exactly touching the bottom-right corner still fits.
+        let corner = PhysicalPosition::new(1920 - 130, 1080 - 40);
+        assert_eq!(
+            widget_position(Some(corner), &screens, Some(MAIN)),
+            Some((corner, 1.0))
+        );
+    }
+
+    #[test]
+    fn widget_saved_position_reports_the_scale_of_its_screen() {
+        let hidpi = screen(1920, 0, 2880, 1800, 2.0);
+        let saved = PhysicalPosition::new(2000, 100);
+        assert_eq!(
+            widget_position(Some(saved), &[MAIN, hidpi], Some(MAIN)),
+            Some((saved, 2.0))
+        );
+    }
+
+    #[test]
+    fn widget_saved_position_off_every_screen_falls_back_to_top_right() {
+        let fallback = Some((PhysicalPosition::new(1920 - 154, 64), 1.0));
+        // A monitor that is no longer connected.
+        let gone = PhysicalPosition::new(3000, 300);
+        assert_eq!(widget_position(Some(gone), &[MAIN], Some(MAIN)), fallback);
+        // Partly past the right edge.
+        let straddling = PhysicalPosition::new(1920 - 100, 300);
+        assert_eq!(
+            widget_position(Some(straddling), &[MAIN], Some(MAIN)),
+            fallback
+        );
+        // Above the top.
+        let above = PhysicalPosition::new(500, -10);
+        assert_eq!(widget_position(Some(above), &[MAIN], Some(MAIN)), fallback);
+        // Too big at this screen's scale: 130x40 logical is 260x80 at 2x.
+        let hidpi = screen(0, 0, 1920, 1080, 2.0);
+        let near_edge = PhysicalPosition::new(1920 - 200, 0);
+        assert_eq!(
+            widget_position(Some(near_edge), &[hidpi], Some(hidpi)),
+            Some((PhysicalPosition::new(1920 - 308, 128), 2.0))
+        );
+    }
+
+    #[test]
+    fn widget_spanning_two_screens_is_not_inside_either() {
+        let right = screen(1920, 0, 1920, 1080, 1.0);
+        let across = PhysicalPosition::new(1920 - 60, 500);
+        assert_eq!(
+            widget_position(Some(across), &[MAIN, right], Some(MAIN)),
+            Some((PhysicalPosition::new(1920 - 154, 64), 1.0))
+        );
+    }
+
+    #[test]
+    fn widget_without_primary_uses_first_screen_and_without_screens_none() {
+        let only = screen(100, 50, 1600, 900, 1.0);
+        assert_eq!(
+            widget_position(None, &[only], None),
+            Some((PhysicalPosition::new(100 + 1600 - 154, 50 + 64), 1.0))
+        );
+        assert_eq!(
+            widget_position(Some(PhysicalPosition::new(0, 0)), &[], None),
+            None
+        );
     }
 
     #[test]

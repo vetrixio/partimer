@@ -333,11 +333,7 @@ pub fn delete_item(
 /// The stored widget settings with `enabled` resolved to the platform default.
 fn widget_view(stored: &WidgetSettings) -> WidgetSettings {
     WidgetSettings {
-        enabled: Some(
-            stored
-                .enabled
-                .unwrap_or_else(platform::widget_default_enabled),
-        ),
+        enabled: Some(platform::widget_enabled(stored.enabled)),
         ..stored.clone()
     }
 }

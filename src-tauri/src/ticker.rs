@@ -11,7 +11,7 @@ use tauri::plugin::PermissionState;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
 
-use crate::{AppState, commands, lock, tray};
+use crate::{AppState, commands, lock, tray, windows};
 
 const FRAME_INTERVAL: Duration = Duration::from_millis(500);
 /// The session ticks every second frame, i.e. once a second.
@@ -30,6 +30,12 @@ struct Snapshot {
 
 fn should_emit(prev: Option<&Snapshot>, next: &Snapshot, reminded: bool) -> bool {
     reminded || prev != Some(next)
+}
+
+/// The floating clock depends on the status only (and on settings, which update it
+/// themselves), so the first tick and every status change re-check it.
+fn status_changed(prev: Option<&Snapshot>, next: &Snapshot) -> bool {
+    prev.map(|p| p.status) != Some(next.status)
 }
 
 fn reminder_text(reminder: &Reminder) -> String {
@@ -88,6 +94,9 @@ fn tick(app: &AppHandle, last: Option<&Snapshot>) -> Option<Snapshot> {
         minute: panel.elapsed_seconds / 60,
         notices: panel.notices,
     };
+    if status_changed(last, &snapshot) {
+        windows::ensure_widget(app);
+    }
     if should_emit(last, &snapshot, !reminders.is_empty()) {
         commands::changed(app);
     }
@@ -130,6 +139,21 @@ mod tests {
             minute: elapsed / 60,
             notices: Vec::new(),
         }
+    }
+
+    #[test]
+    fn widget_is_updated_on_first_tick_and_status_changes_only() {
+        let running = snap(TimerStatus::Running, 60);
+        assert!(status_changed(None, &running));
+        assert!(!status_changed(
+            Some(&running),
+            &snap(TimerStatus::Running, 600)
+        ));
+        assert!(status_changed(
+            Some(&running),
+            &snap(TimerStatus::Paused, 60)
+        ));
+        assert!(status_changed(Some(&running), &snap(TimerStatus::Idle, 0)));
     }
 
     #[test]

@@ -17,6 +17,11 @@ pub fn widget_default_enabled() -> bool {
     !cfg!(target_os = "macos")
 }
 
+/// The stored `widget.enabled`, or the platform default when the user never chose.
+pub fn widget_enabled(stored: Option<bool>) -> bool {
+    stored.unwrap_or_else(widget_default_enabled)
+}
+
 /// Whether this is a Wayland desktop session (even when the app itself runs through XWayland):
 /// global shortcuts may "register" there and still never fire.
 pub fn is_wayland_session() -> bool {

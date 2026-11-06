@@ -60,6 +60,13 @@ html[data-window="panel"] body {
   overflow: hidden;
 }
 
+/* The floating clock's window is transparent; only its capsule is drawn. */
+html[data-window="widget"],
+html[data-window="widget"] body {
+  overflow: hidden;
+  background: transparent;
+}
+
 h1 {
   font-size: 1.25rem;
   margin: 0;

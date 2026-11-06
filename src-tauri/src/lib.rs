@@ -115,8 +115,8 @@ pub fn run() {
                 eprintln!("partimer: cannot create the tray icon: {e}");
             }
             register_shortcut(app.handle());
+            // The ticker's first tick also shows the floating clock if it should be up.
             ticker::spawn(app.handle());
-            windows::ensure_widget(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
