@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod catalog;
 pub mod duration;
 pub mod edit;
