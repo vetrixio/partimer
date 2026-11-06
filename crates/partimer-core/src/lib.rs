@@ -3,6 +3,7 @@ pub mod duration;
 pub mod edit;
 pub mod model;
 pub mod report;
+pub mod storage;
 #[cfg(test)]
 mod testutil;
 pub mod timer;
