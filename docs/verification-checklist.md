@@ -90,3 +90,20 @@ Set-up: a few entries this month and last month across two clients, one entry th
 - [ ] Click an entry in the panel's 今日紀錄: the records window opens (also when it was not open yet) on that entry's month with the editor showing it. Do it again with the records window already open on another month.
 - [ ] 匯出 CSV: a save dialog proposes partimer-YYYY-MM.csv; the file contains the filtered month. `head -c 3 <file> | xxd` shows `efbb bf`. Opening it in Excel (Windows and macOS) shows the Chinese correctly. Cancelling the dialog leaves no message.
 - [ ] Dark mode: the window and the editor stay readable.
+
+## Settings window (do every item on macOS, Windows and Ubuntu)
+
+Set-up: two clients with two projects each, one archived project, one project with a few entries (one of them running).
+
+- [ ] 開機自動啟動 (do on all three platforms): turning it on makes the app start at the next login (macOS 登入項目, Windows startup, Ubuntu autostart entry); turning it off removes it. When the system refuses, a red message with the reason and the platform's manual steps appears (macOS 「系統設定 → 一般 → 登入項目…」, Windows 「Win+R shell:startup…」, Ubuntu 「初始啟動程式…」). The toggle shows the real state after reopening the window.
+- [ ] 浮動小時鐘: the switch shows/hides the clock at once; the opacity slider (40%–100%) changes its opacity after release and the % label follows while dragging; 「沒在計時時也顯示」 shows the resting plant while idle. All three survive restarting the app.
+- [ ] 整點提醒 switch: on, a notification arrives at the next full hour while timing.
+- [ ] 全域快捷鍵: shows Ctrl+Alt+P (⌃⌥P on macOS). On Ubuntu Wayland a red text with the 自訂快捷鍵 workaround shows; when another program already owns the shortcut, red 「快捷鍵被其他程式占用」 shows; otherwise no red text.
+- [ ] Rename: typing in a name box shows 儲存 and 還原; typing the original name back (or only spaces around it) hides them. 儲存 or Enter saves; Enter while an IME candidate window is open only confirms the composition. 還原 restores the old name.
+- [ ] Rename rejections show the Chinese reason right under that row and keep what you typed: empty name, a client named like another client, a project named like another project of the same client (same name under a different client is fine).
+- [ ] While you type a new name in one row, start/stop a timer from the panel (or rename something in another row): the half-typed text stays, other rows update.
+- [ ] 色塊: the 8 swatches match the dots in the panel menu and 紀錄; the current colour has an outline; clicking another colour changes it at once (also in the panel menu dot and in 紀錄). Tab reaches each swatch.
+- [ ] 封存: an archived project (or a whole archived client) disappears from the panel's project menu but its entries still show in 紀錄; 取消封存 brings it back. Archiving the running project does not stop the timer.
+- [ ] 刪除: a project/client with entries asks 「會刪掉 N 筆紀錄、共 Xh Ym，確定刪除？」 in front of the window and the numbers match 紀錄 (check one with exactly 1h 0m and one under an hour: 「0h」 never shows, e.g. 「45m」); one without entries asks 「確定刪除？」. Deleting a client removes its projects and their entries. If the running entry is included, the dialog adds 「其中包含正在計時的紀錄，計時會一併停止。」 and after 確定 the timer is gone. 取消 changes nothing.
+- [ ] 打開資料夾 opens the data folder in Finder / Explorer / the file manager; the path shown above it is the same folder.
+- [ ] Dark mode: the window stays readable, the swatch outline is visible on both themes.

@@ -360,7 +360,10 @@ fn merge_widget(stored: &WidgetSettings, incoming: WidgetSettings) -> WidgetSett
 }
 
 fn settings_view(app: &AppHandle, state: &State<'_, AppState>) -> SettingsView {
-    let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
+    let (autostart_enabled, probe_error) = match app.autolaunch().is_enabled() {
+        Ok(on) => (on, None),
+        Err(e) => (false, Some(format!("無法讀取開機自動啟動的狀態：{e}"))),
+    };
     let (widget, hourly_reminder, data_dir) = {
         let s = session(state);
         let settings = s.settings();
@@ -372,7 +375,7 @@ fn settings_view(app: &AppHandle, state: &State<'_, AppState>) -> SettingsView {
     };
     SettingsView {
         autostart_enabled,
-        autostart_error: crate::lock(&state.autostart_error).clone(),
+        autostart_error: crate::lock(&state.autostart_error).clone().or(probe_error),
         autostart_help: platform::autostart_help(),
         widget,
         hourly_reminder,
