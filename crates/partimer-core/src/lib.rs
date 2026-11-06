@@ -1,5 +1,6 @@
 pub mod catalog;
 pub mod duration;
+pub mod edit;
 pub mod model;
 #[cfg(test)]
 mod testutil;
