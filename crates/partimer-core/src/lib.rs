@@ -2,6 +2,7 @@ pub mod catalog;
 pub mod duration;
 pub mod edit;
 pub mod model;
+pub mod report;
 #[cfg(test)]
 mod testutil;
 pub mod timer;
