@@ -9,7 +9,6 @@
     "core:window:allow-set-position",
     "core:window:allow-start-dragging",
     "core:window:allow-hide",
-    "dialog:allow-ask",
-    "dialog:allow-message"
+    "dialog:allow-ask"
   ]
 }

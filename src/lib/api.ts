@@ -51,6 +51,7 @@ export type NoticeKind =
   | "saveError"
   | "editedElsewhere"
   | "unreadable"
+  | "newerVersion"
   | "info";
 
 export interface Notice {

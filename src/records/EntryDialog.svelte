@@ -37,14 +37,27 @@
     if (!running && !form.endLocal) form.endLocal = toLocalInput(new Date());
   }
 
+  /** Whole minutes ≥ 0; an emptied field counts as 0. null = invalid (the backend would
+   *  reject a fraction or negative number with a raw deserialization error). */
+  function pausedMinutes(): number | null {
+    const raw = form.pausedMinutes as number | string | null;
+    if (raw === null || raw === "") return 0;
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= 0 ? n : null;
+  }
+
   async function save() {
+    const minutes = pausedMinutes();
+    if (minutes === null) {
+      error = "暫停分鐘請填整數";
+      return;
+    }
     busy = true;
     error = null;
     try {
       await api.saveEntry(id, {
         ...form,
-        // An emptied number field is null; the backend would reject it with a raw error.
-        pausedMinutes: Number(form.pausedMinutes) || 0,
+        pausedMinutes: minutes,
         endLocal: form.stillRunning ? null : form.endLocal,
       });
       ondone();
@@ -83,7 +96,10 @@
 
 <div class="backdrop" role="presentation">
   <div class="dialog" role="dialog" aria-modal="true" aria-label={id === null ? "新增紀錄" : "編輯紀錄"}>
+  <!-- novalidate: the browser's own validation bubbles (step mismatch etc.) are not in
+       Traditional Chinese and vary by WebView; save() and the backend report errors instead. -->
   <form
+    novalidate
     onsubmit={(ev) => {
       ev.preventDefault();
       void save();

@@ -304,7 +304,10 @@
         {#each panel.notices as n (n.id)}
           <div
             class="notice"
-            class:danger={n.kind === "saveError" || n.kind === "unreadable" || n.kind === "corruptNoBackup"}
+            class:danger={n.kind === "saveError" ||
+              n.kind === "unreadable" ||
+              n.kind === "newerVersion" ||
+              n.kind === "corruptNoBackup"}
             role="status"
           >
             <p>{n.message}</p>
@@ -423,6 +426,8 @@
     flex: 1;
     margin: 0;
     overflow-wrap: anywhere;
+    /* Keeps line breaks of unsaved text quoted in the "ended elsewhere" notice. */
+    white-space: pre-wrap;
   }
   .notice.danger {
     background: var(--danger-bg);

@@ -19,6 +19,7 @@
   },
   "bundle": {
     "active": true,
+    "category": "Productivity",
     "targets": ["dmg", "app", "nsis", "deb", "appimage"],
     "icon": [
       "icons/32x32.png",

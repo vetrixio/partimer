@@ -3,7 +3,7 @@
 //! ever changed from one thread.
 
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use partimer_core::{Notice, Reminder, TimerStatus};
@@ -16,6 +16,9 @@ use crate::{AppState, commands, lock, tray, windows};
 const FRAME_INTERVAL: Duration = Duration::from_millis(500);
 /// The session ticks every second frame, i.e. once a second.
 const FRAMES_PER_TICK: u64 = 2;
+/// A floating clock that should be on screen but is missing (e.g. its build failed) is
+/// asked for again at most this often.
+const WIDGET_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 
 /// What the open windows show that changes with time alone. Broadcasting only when it
 /// changes keeps the records window from re-rendering every second.
@@ -38,6 +41,12 @@ fn status_changed(prev: Option<&Snapshot>, next: &Snapshot) -> bool {
     prev.map(|p| p.status) != Some(next.status)
 }
 
+/// Ask for the floating clock again when it should be visible but no window exists and the
+/// last request was at least `WIDGET_RETRY_INTERVAL` ago.
+fn widget_retry_due(wanted: bool, exists: bool, last: Option<Instant>, now: Instant) -> bool {
+    wanted && !exists && last.is_none_or(|t| now.duration_since(t) >= WIDGET_RETRY_INTERVAL)
+}
+
 fn reminder_text(reminder: &Reminder) -> String {
     match reminder {
         Reminder::LongRunning {
@@ -57,11 +66,12 @@ pub fn spawn(app: &AppHandle) {
         .name("partimer-ticker".into())
         .spawn(move || {
             let mut last: Option<Snapshot> = None;
+            let mut widget_asked: Option<Instant> = None;
             for frame in (0..FRAMES_PER_TICK).cycle() {
                 // Animate before ticking: a timer that just started shows frame 0 first.
                 tray::advance_frame(&app);
                 if frame == 0
-                    && let Some(snapshot) = tick(&app, last.as_ref())
+                    && let Some(snapshot) = tick(&app, last.as_ref(), &mut widget_asked)
                 {
                     last = Some(snapshot);
                 }
@@ -73,14 +83,20 @@ pub fn spawn(app: &AppHandle) {
     }
 }
 
-fn tick(app: &AppHandle, last: Option<&Snapshot>) -> Option<Snapshot> {
+fn tick(
+    app: &AppHandle,
+    last: Option<&Snapshot>,
+    widget_asked: &mut Option<Instant>,
+) -> Option<Snapshot> {
     let state = app.try_state::<AppState>()?;
     let now = Utc::now();
-    // Lock → read/mutate → drop; notifications, tray and events come after.
-    let (reminders, panel) = {
+    // Lock → read/mutate → drop; notifications, tray, windows and events come after.
+    let (reminders, panel, widget_wanted) = {
         let mut session = lock(&state.session);
         let reminders = session.tick(now);
-        (reminders, session.panel_state(now))
+        let panel = session.panel_state(now);
+        let wanted = windows::widget_wanted(&session.settings().widget, panel.status);
+        (reminders, panel, wanted)
     };
 
     for reminder in &reminders {
@@ -94,7 +110,16 @@ fn tick(app: &AppHandle, last: Option<&Snapshot>) -> Option<Snapshot> {
         minute: panel.elapsed_seconds / 60,
         notices: panel.notices,
     };
-    if status_changed(last, &snapshot) {
+    let instant = Instant::now();
+    if status_changed(last, &snapshot)
+        || widget_retry_due(
+            widget_wanted,
+            windows::widget_exists(app),
+            *widget_asked,
+            instant,
+        )
+    {
+        *widget_asked = Some(instant);
         windows::ensure_widget(app);
     }
     if should_emit(last, &snapshot, !reminders.is_empty()) {
@@ -154,6 +179,17 @@ mod tests {
             &snap(TimerStatus::Paused, 60)
         ));
         assert!(status_changed(Some(&running), &snap(TimerStatus::Idle, 0)));
+    }
+
+    #[test]
+    fn missing_widget_is_asked_for_again_at_most_every_five_seconds() {
+        let t0 = Instant::now();
+        let after = |secs| t0 + Duration::from_secs(secs);
+        assert!(widget_retry_due(true, false, None, t0));
+        assert!(!widget_retry_due(true, false, Some(t0), after(4)));
+        assert!(widget_retry_due(true, false, Some(t0), after(5)));
+        assert!(!widget_retry_due(true, true, Some(t0), after(60)), "exists");
+        assert!(!widget_retry_due(false, false, None, t0), "not wanted");
     }
 
     #[test]

@@ -13,6 +13,7 @@ use tauri::{
 };
 
 use partimer_core::TimerStatus;
+use partimer_core::model::WidgetSettings;
 
 use crate::{AppState, lock, platform};
 
@@ -133,11 +134,7 @@ fn ensure_widget_now(app: &AppHandle) -> tauri::Result<()> {
         let session = lock(&state.session);
         let widget = &session.settings().widget;
         let status = session.panel_state(Utc::now()).status;
-        let visible = widget_visible(
-            platform::widget_enabled(widget.enabled),
-            status,
-            widget.show_when_idle,
-        );
+        let visible = widget_wanted(widget, status);
         let saved = widget
             .x
             .zip(widget.y)
@@ -185,6 +182,20 @@ fn build_widget(app: &AppHandle, saved: Option<PhysicalPosition<i32>>) -> tauri:
     }
     builder.build()?;
     Ok(())
+}
+
+/// `widget_visible` for the stored settings (resolving the platform default).
+pub fn widget_wanted(widget: &WidgetSettings, status: TimerStatus) -> bool {
+    widget_visible(
+        platform::widget_enabled(widget.enabled),
+        status,
+        widget.show_when_idle,
+    )
+}
+
+/// Whether the floating clock window currently exists.
+pub fn widget_exists(app: &AppHandle) -> bool {
+    app.get_webview_window(WIDGET).is_some()
 }
 
 /// Whether the floating clock should be on screen: switched on, and timing (running or
