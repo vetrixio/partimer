@@ -1,3 +1,4 @@
+pub mod catalog;
 pub mod duration;
 pub mod model;
 #[cfg(test)]
