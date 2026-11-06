@@ -1007,6 +1007,36 @@ fn unreadable_data_file_blocks_saving() {
 }
 
 #[test]
+fn newer_version_data_file_blocks_saving() {
+    let mut d = base_data();
+    d.version = 2;
+    let fs = seed(&d);
+    let original = fs.get(&paths().data()).unwrap();
+    let mut s = open(fs, at(0));
+    let n = notice(&s, NoticeKind::NewerVersion).expect("newer version notice");
+    assert_eq!(
+        n.message,
+        "資料檔是由較新版本的打工人計時器建立的，為避免覆蓋，這次開啟期間的變更不會存檔。請改用較新的版本。"
+    );
+    assert!(!n.dismissable);
+    s.dismiss_notice(n.id);
+    assert!(notice(&s, NoticeKind::NewerVersion).is_some());
+    assert_eq!(s.panel_state(at(0)).groups.len(), 1, "data is shown");
+    assert!(log_text(&s).contains("note=newer data version 2, saving blocked"));
+
+    s.start("p1", "A", "", at(0)).unwrap();
+    s.tick(at(1));
+    s.stop("A", "", at(60)).unwrap();
+    s.flush_on_exit(at(61));
+    assert_eq!(s.fs.get(&paths().data()).unwrap(), original);
+    assert!(
+        !s.fs
+            .exists(&paths().backup_for(chrono::NaiveDate::from_ymd_opt(2026, 10, 6).unwrap()))
+    );
+    assert!(notice(&s, NoticeKind::SaveError).is_none());
+}
+
+#[test]
 fn unreadable_without_backup_omits_backup_sentence() {
     let fs = seeded();
     *fs.fail_reads_of.borrow_mut() = Some(paths().data());
@@ -1067,24 +1097,107 @@ fn push_and_dismiss_info_notice() {
 }
 
 #[test]
-fn finishing_running_entry_in_records_keeps_dirty_draft_with_notice() {
+fn finishing_running_entry_in_records_resets_dirty_draft_and_keeps_text_in_notice() {
     let mut s = open(seeded(), at(0));
     s.start("p1", "A", "B", at(0)).unwrap();
     let id = running_id(&s, at(1));
     s.set_draft("A".into(), "沒存的字".into(), s.draft.generation);
+    let generation = s.panel_state(at(1)).draft.generation;
     let mut f = s.entry_form(&id).unwrap();
     f.still_running = false;
     f.end_local = Some("2026-10-06T09:30".into());
     s.save_entry(Some(&id), f, at(H)).unwrap();
     let p = s.panel_state(at(H));
     assert_eq!(p.status, TimerStatus::Idle);
-    assert_eq!(p.draft.content, "沒存的字");
+    assert!(
+        p.draft.generation > generation,
+        "draft detached from the ended entry"
+    );
+    assert_eq!(
+        (p.draft.title.as_str(), p.draft.content.as_str()),
+        ("A", "")
+    );
     let n = notice(&s, NoticeKind::EditedElsewhere).expect("notice");
     assert_eq!(
         n.message,
-        "這筆已在紀錄視窗結束，面板上未儲存的文字沒有寫入，請到紀錄視窗補寫。"
+        "這筆已在紀錄視窗結束，面板上未儲存的文字沒有寫入。原文：標題「A」，內容：沒存的字（請到紀錄視窗補寫）"
     );
+    assert!(n.dismissable);
     assert_eq!(disk_entry(&s, &id).content, "B");
+
+    // The next START must not carry the old entry's text.
+    let stale = s.draft.generation - 1;
+    s.set_draft("A".into(), "沒存的字".into(), stale);
+    s.start("p1", &p.draft.title, &p.draft.content, at(H + 60))
+        .unwrap();
+    let next = running_id(&s, at(H + 61));
+    assert_ne!(next, id);
+    assert_eq!(disk_entry(&s, &next).content, "");
+}
+
+#[test]
+fn finishing_running_entry_in_records_notice_omits_empty_parts() {
+    let mut s = open(seeded(), at(0));
+    s.start("p1", "A", "B", at(0)).unwrap();
+    let id = running_id(&s, at(1));
+    s.set_draft(String::new(), "只有內容".into(), s.draft.generation);
+    let mut f = s.entry_form(&id).unwrap();
+    f.still_running = false;
+    f.end_local = Some("2026-10-06T09:30".into());
+    s.save_entry(Some(&id), f, at(H)).unwrap();
+    let n = notice(&s, NoticeKind::EditedElsewhere).expect("notice");
+    assert_eq!(
+        n.message,
+        "這筆已在紀錄視窗結束，面板上未儲存的文字沒有寫入。原文：內容：只有內容（請到紀錄視窗補寫）"
+    );
+}
+
+#[test]
+fn flush_on_exit_does_not_overwrite_records_window_edit() {
+    let mut s = open(seeded(), at(0));
+    s.start("p1", "A", "B", at(0)).unwrap();
+    let id = running_id(&s, at(1));
+    s.set_draft("A".into(), "打字中".into(), s.draft.generation);
+    let mut f = s.entry_form(&id).unwrap();
+    f.title = "A2".into();
+    f.content = "紀錄視窗的內容".into();
+    s.save_entry(Some(&id), f, at(60)).unwrap();
+    assert!(notice(&s, NoticeKind::EditedElsewhere).is_some());
+    s.flush_on_exit(at(120));
+    let e = disk_entry(&s, &id);
+    assert_eq!(
+        (e.title.as_str(), e.content.as_str()),
+        ("A2", "紀錄視窗的內容")
+    );
+    assert_eq!(count_action(&s, "SAVE"), 0);
+}
+
+#[test]
+fn quarantined_items_are_reported_once_on_open() {
+    let mut d = base_data();
+    d.quarantined_entries
+        .push(serde_json::json!({"id": "bad1"}));
+    d.quarantined_entries
+        .push(serde_json::json!({"id": "bad2"}));
+    d.quarantined_projects
+        .push(serde_json::json!({"id": "badp"}));
+    let s = open(seed(&d), at(0));
+    let n = notice(&s, NoticeKind::Info).expect("info notice");
+    assert_eq!(
+        n.message,
+        "有 3 筆資料格式不正確，已另外保留在資料檔中，不會顯示在清單與合計裡。"
+    );
+    assert!(n.dismissable);
+    assert_eq!(s.panel_state(at(0)).notices.len(), 1);
+    assert_eq!(log_text(&s).matches("note=quarantined=3").count(), 1);
+    assert_eq!(count_action(&s, "RESTORE"), 1);
+}
+
+#[test]
+fn no_quarantine_notice_when_everything_parses() {
+    let s = open(seeded(), at(0));
+    assert!(notice(&s, NoticeKind::Info).is_none());
+    assert!(!log_text(&s).contains("quarantined"));
 }
 
 #[test]

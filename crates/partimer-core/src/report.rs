@@ -154,9 +154,15 @@ pub fn export_csv(data: &Data, f: &Filter, zone: &dyn LocalZone) -> Vec<u8> {
     bytes
 }
 
+/// RFC 4180 quoting, plus OWASP CSV-injection defence: a cell starting with `=`, `+`, `-`,
+/// `@`, TAB or CR gets a leading TAB (invisible in Excel, unlike `'`) so Excel shows it as
+/// text instead of evaluating it (e.g. a "- " bullet would otherwise become `#NAME?`).
+/// Neutralized cells are always quoted so the leading TAB is clearly part of the field.
 fn csv_field(s: &str) -> String {
-    if s.contains([',', '"', '\r', '\n']) {
-        format!("\"{}\"", s.replace('"', "\"\""))
+    let neutralize = s.starts_with(['=', '+', '-', '@', '\t', '\r']);
+    if neutralize || s.contains([',', '"', '\r', '\n']) {
+        let prefix = if neutralize { "\t" } else { "" };
+        format!("\"{prefix}{}\"", s.replace('"', "\"\""))
     } else {
         s.to_string()
     }
@@ -462,6 +468,44 @@ mod tests {
         assert!(s.ends_with(",\"a,\"\"b\"\"\nc\"\r\n"), "{s:?}");
         assert_eq!(csv_field("a\rb"), "\"a\rb\"");
         assert_eq!(csv_field("plain"), "plain");
+    }
+
+    #[test]
+    fn csv_neutralizes_formula_like_cells() {
+        // Leading = + - @ TAB CR get an invisible TAB so Excel shows text, not a formula.
+        assert_eq!(csv_field("- 改 banner"), "\"\t- 改 banner\"");
+        assert_eq!(csv_field("=1+1"), "\"\t=1+1\"");
+        assert_eq!(csv_field("@x"), "\"\t@x\"");
+        assert_eq!(csv_field("+1"), "\"\t+1\"");
+        assert_eq!(csv_field("\tx"), "\"\t\tx\"");
+        assert_eq!(csv_field("\rx"), "\"\t\rx\"");
+        assert_eq!(csv_field("- a,\"b\""), "\"\t- a,\"\"b\"\"\"");
+        assert_eq!(csv_field("a-b"), "a-b");
+        assert_eq!(csv_field("1.50"), "1.50");
+    }
+
+    #[test]
+    fn csv_neutralizes_every_text_column() {
+        let z = tz("Asia/Taipei");
+        let mut d = data();
+        d.clients[0].name = "=客戶".into();
+        d.projects[0].name = "+專案".into();
+        let mut x = e(
+            "a",
+            "p1",
+            "2026-10-06T01:30:00Z",
+            Some("2026-10-06T03:00:00Z"),
+        );
+        x.title = "@標題".into();
+        x.content = "- 改 banner\n- 修 RWD".into();
+        d.entries.push(x);
+        let out = export_csv(&d, &f(2026, 10), z.as_ref());
+        let s = String::from_utf8(out[3..].to_vec()).unwrap();
+        let lines: Vec<&str> = s.split("\r\n").collect();
+        assert_eq!(
+            lines[1],
+            "2026-10-06,\"\t=客戶\",\"\t+專案\",09:30,11:00,90,1.50,0,\"\t@標題\",\"\t- 改 banner\n- 修 RWD\""
+        );
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, Utc};
 
-use crate::model::{Data, parse_data, to_json};
+use crate::model::{DATA_VERSION, Data, parse_data, to_json};
 use crate::zone::LocalZone;
 
 pub const BACKUP_KEEP: usize = 30;
@@ -137,6 +137,11 @@ pub enum LoadNotice {
         error: String,
         backup_date: Option<NaiveDate>,
     },
+    /// The data (from `data.json` or a backup) has a `version` newer than this app knows.
+    /// It is shown read-only and never written; saving must stay blocked.
+    NewerVersion {
+        version: u32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -144,8 +149,15 @@ pub struct Loaded {
     pub data: Data,
     pub notice: Option<LoadNotice>,
     pub write_back_error: Option<String>,
-    /// True only when the data file is unreadable: the caller must not save.
+    /// True when the data file is unreadable or from a newer version: the caller must not save.
     pub save_blocked: bool,
+}
+
+/// Data from a newer app version must be shown read-only and never written back.
+fn newer_version(data: &Data) -> Option<LoadNotice> {
+    (data.version > DATA_VERSION).then_some(LoadNotice::NewerVersion {
+        version: data.version,
+    })
 }
 
 fn backup_date_of(path: &Path) -> Option<NaiveDate> {
@@ -211,7 +223,10 @@ pub fn load(fs: &dyn Fs, paths: &Paths, zone: &dyn LocalZone, now: DateTime<Utc>
 
     match fs.read(&paths.data()) {
         Ok(bytes) => match parse_data(&bytes) {
-            Ok(data) => done(data, None, None, false),
+            Ok(data) => match newer_version(&data) {
+                Some(notice) => done(data, Some(notice), None, true),
+                None => done(data, None, None, false),
+            },
             Err(_) => {
                 let corrupt_path = unique_corrupt_path(fs, paths, zone, now);
                 let backup = newest_good_backup(fs, paths);
@@ -227,6 +242,9 @@ pub fn load(fs: &dyn Fs, paths: &Paths, zone: &dyn LocalZone, now: DateTime<Utc>
                 }
                 match backup {
                     Some((backup_date, data)) => {
+                        if let Some(notice) = newer_version(&data) {
+                            return done(data, Some(notice), None, true);
+                        }
                         let err = write_back(&data);
                         let notice = LoadNotice::RestoredCorrupt {
                             backup_date,
@@ -245,6 +263,9 @@ pub fn load(fs: &dyn Fs, paths: &Paths, zone: &dyn LocalZone, now: DateTime<Utc>
         },
         Err(e) if e.kind() == io::ErrorKind::NotFound => match newest_good_backup(fs, paths) {
             Some((backup_date, data)) => {
+                if let Some(notice) = newer_version(&data) {
+                    return done(data, Some(notice), None, true);
+                }
                 let err = write_back(&data);
                 let notice = LoadNotice::RestoredMissing { backup_date };
                 done(data, Some(notice), err, false)
@@ -332,6 +353,43 @@ mod tests {
         save_atomic(&fs, &paths(), &sample()).unwrap();
         let l = run_load(&fs);
         assert_eq!(l.data, sample());
+        assert_eq!(l.notice, None);
+        assert!(!l.save_blocked);
+    }
+
+    #[test]
+    fn newer_version_file_loads_read_only() {
+        let fs = MemFs::new();
+        let newer = br#"{"version":2,"clients":[{"id":"a","name":"A"}],"future":true}"#;
+        fs.put(paths().data(), newer);
+        let l = run_load(&fs);
+        assert_eq!(l.data.clients.len(), 1);
+        assert_eq!(l.notice, Some(LoadNotice::NewerVersion { version: 2 }));
+        assert_eq!(l.write_back_error, None);
+        assert!(l.save_blocked);
+        assert_eq!(fs.get(&paths().data()).unwrap(), newer);
+        assert!(!fs.exists(&paths().tmp()));
+    }
+
+    #[test]
+    fn newer_version_backup_is_not_written_back() {
+        let fs = MemFs::new();
+        fs.put(
+            paths().backup_for(d(10, 6)),
+            br#"{"version":3,"clients":[{"id":"a","name":"A"}]}"#,
+        );
+        let l = run_load(&fs);
+        assert_eq!(l.data.clients.len(), 1);
+        assert_eq!(l.notice, Some(LoadNotice::NewerVersion { version: 3 }));
+        assert!(l.save_blocked);
+        assert!(!fs.exists(&paths().data()));
+    }
+
+    #[test]
+    fn current_version_file_is_not_blocked() {
+        let fs = MemFs::new();
+        fs.put(paths().data(), br#"{"version":1}"#);
+        let l = run_load(&fs);
         assert_eq!(l.notice, None);
         assert!(!l.save_blocked);
     }

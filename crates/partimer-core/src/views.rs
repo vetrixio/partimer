@@ -66,6 +66,8 @@ pub enum NoticeKind {
     SaveError,
     EditedElsewhere,
     Unreadable,
+    /// `data.json` was written by a newer app version: saving is blocked.
+    NewerVersion,
     Info,
 }
 

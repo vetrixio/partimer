@@ -154,7 +154,8 @@ pub fn parse_data(bytes: &[u8]) -> Result<Data, ParseError> {
     let version = obj
         .get("version")
         .and_then(Value::as_u64)
-        .and_then(|v| u32::try_from(v).ok())
+        // Too large for u32 is still "newer than us", never "current".
+        .map(|v| u32::try_from(v).unwrap_or(u32::MAX))
         .unwrap_or(DATA_VERSION);
 
     let mut quarantined_clients = take_array(&mut obj, "quarantinedClients")?;
@@ -243,6 +244,12 @@ mod tests {
             let json = format!(r#"{{"{key}":{{}}}}"#);
             assert!(parse_data(json.as_bytes()).is_err(), "{key}");
         }
+    }
+
+    #[test]
+    fn version_too_large_for_u32_counts_as_newest() {
+        let d = parse_data(br#"{"version":99999999999}"#).unwrap();
+        assert_eq!(d.version, u32::MAX);
     }
 
     #[test]

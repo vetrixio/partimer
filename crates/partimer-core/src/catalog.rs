@@ -13,6 +13,8 @@ pub enum CatalogError {
     DuplicateClient,
     #[error("這個客戶底下已經有同名的專案")]
     DuplicateProject,
+    #[error("這個客戶底下已經有同名的專案（已封存，可在設定中取消封存）")]
+    DuplicateArchivedProject,
     #[error("顏色不正確")]
     InvalidColor,
     #[error("找不到這個項目")]
@@ -36,6 +38,15 @@ fn clean_name(name: &str) -> Result<&str, CatalogError> {
     }
 }
 
+/// An archived duplicate is hidden from the panel, so say where to find it.
+fn duplicate_project(existing: &Project) -> CatalogError {
+    if existing.archived {
+        CatalogError::DuplicateArchivedProject
+    } else {
+        CatalogError::DuplicateProject
+    }
+}
+
 /// Adds a project, creating the client when no client has the same trimmed name.
 /// Returns the new project id.
 pub fn add_project(
@@ -53,8 +64,8 @@ pub fn add_project(
     let (client_id, color) = match existing {
         Some(id) => {
             let siblings = data.projects.iter().filter(|p| p.client_id == id);
-            if siblings.clone().any(|p| p.name == project_name) {
-                return Err(CatalogError::DuplicateProject);
+            if let Some(dup) = siblings.clone().find(|p| p.name == project_name) {
+                return Err(duplicate_project(dup));
             }
             let count = siblings.count();
             // Unarchive the merged client so the new project shows in `active_groups`.
@@ -106,12 +117,12 @@ pub fn rename_project(data: &mut Data, id: &str, name: &str) -> Result<(), Catal
         .find(|p| p.id == id)
         .map(|p| p.client_id.clone())
         .ok_or(CatalogError::NotFound)?;
-    if data
+    if let Some(dup) = data
         .projects
         .iter()
-        .any(|p| p.id != id && p.client_id == client_id && p.name == name)
+        .find(|p| p.id != id && p.client_id == client_id && p.name == name)
     {
-        return Err(CatalogError::DuplicateProject);
+        return Err(duplicate_project(dup));
     }
     if let Some(p) = data.projects.iter_mut().find(|p| p.id == id) {
         p.name = name.to_string();
@@ -325,9 +336,14 @@ mod tests {
         set_project_archived(&mut d, &id, true).unwrap();
         assert_eq!(
             add_project(&mut d, "A", "P"),
-            Err(CatalogError::DuplicateProject)
+            Err(CatalogError::DuplicateArchivedProject)
         );
         assert_eq!(d.projects.len(), 1);
+        let other = add_project(&mut d, "A", "Q").unwrap();
+        assert_eq!(
+            rename_project(&mut d, &other, "P"),
+            Err(CatalogError::DuplicateArchivedProject)
+        );
     }
 
     #[test]
@@ -602,6 +618,10 @@ mod tests {
         assert_eq!(
             CatalogError::DuplicateProject.to_string(),
             "這個客戶底下已經有同名的專案"
+        );
+        assert_eq!(
+            CatalogError::DuplicateArchivedProject.to_string(),
+            "這個客戶底下已經有同名的專案（已封存，可在設定中取消封存）"
         );
         assert_eq!(CatalogError::InvalidColor.to_string(), "顏色不正確");
         assert_eq!(CatalogError::NotFound.to_string(), "找不到這個項目");

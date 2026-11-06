@@ -19,8 +19,7 @@ use crate::zone::{LocalZone, format_hhmm, format_local_input, local_date, parse_
 const LONG_RUNNING_SECS: i64 = 12 * 3600;
 const WEEKDAYS: [&str; 7] = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"];
 const EDITED_ELSEWHERE: &str = "這筆已在紀錄視窗被修改，面板上的文字尚未儲存";
-const ENDED_ELSEWHERE: &str =
-    "這筆已在紀錄視窗結束，面板上未儲存的文字沒有寫入，請到紀錄視窗補寫。";
+const ENDED_ELSEWHERE: &str = "這筆已在紀錄視窗結束，面板上未儲存的文字沒有寫入";
 const REPAIRED_RUNNING: &str =
     "發現多筆同時在計時的紀錄，已保留最新的一筆，其餘已在下一筆開始時結束，請到紀錄視窗確認。";
 const REPAIRED_RUNNING_NOTE: &str = "repaired-multiple-running";
@@ -38,6 +37,26 @@ fn file_name(p: &Path) -> String {
     p.file_name()
         .map(|f| f.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+/// Notice for a running entry finished in the records window while the panel had unsaved
+/// text; the text itself is quoted so the user can copy it into the records window.
+fn ended_elsewhere_message(title: &str, content: &str) -> String {
+    let mut parts = Vec::new();
+    if !title.is_empty() {
+        parts.push(format!("標題「{title}」"));
+    }
+    if !content.is_empty() {
+        parts.push(format!("內容：{content}"));
+    }
+    if parts.is_empty() {
+        format!("{ENDED_ELSEWHERE}，請到紀錄視窗補寫。")
+    } else {
+        format!(
+            "{ENDED_ELSEWHERE}。原文：{}（請到紀錄視窗補寫）",
+            parts.join("，")
+        )
+    }
 }
 
 fn status_of(e: &Entry) -> TimerStatus {
@@ -67,7 +86,7 @@ pub struct Session<F: Fs> {
     draft: Draft,
     /// Changes that are not on disk yet.
     dirty: bool,
-    /// `data.json` could not be read: never write it during this run.
+    /// `data.json` could not be read or is from a newer version: never write it this run.
     save_blocked: bool,
     last_backup_date: Option<NaiveDate>,
     notices: Vec<Notice>,
@@ -109,6 +128,7 @@ impl<F: Fs> Session<F> {
         if let Some(n) = loaded.notice {
             s.report_load_notice(n, now);
         }
+        s.report_quarantined(now);
         s.repair_multiple_running(now);
         s.draft = match s.running() {
             Some(e) => Draft {
@@ -648,8 +668,14 @@ impl<F: Fs> Session<F> {
     }
 
     /// On quit: save an unsaved draft into the running entry, then try one last save.
+    /// Not while the "edited in the records window" notice is up: the user has not decided
+    /// yet, and saving would silently overwrite the records-window edit (spec §5.4).
     pub fn flush_on_exit(&mut self, now: DateTime<Utc>) {
-        if !self.draft_saved() {
+        let undecided = self
+            .notices
+            .iter()
+            .any(|n| n.kind == NoticeKind::EditedElsewhere);
+        if !self.draft_saved() && !undecided {
             let (title, content) = (self.draft.title.clone(), self.draft.content.clone());
             let _ = self.save_draft(&title, &content, now);
         }
@@ -815,26 +841,34 @@ impl<F: Fs> Session<F> {
     }
 
     /// The running entry was edited in the records window (`before` = its state before).
+    /// Still running: a clean draft follows the edit, a dirty one is kept with a notice.
+    /// Finished: the fields always become the next entry's draft (spec §5.3); unsaved text
+    /// is only shown in the notice so it is not lost.
     fn after_running_edited(&mut self, before: &Entry) {
         let clean = self.draft.title == before.title && self.draft.content == before.content;
         let still_running = self.running().filter(|e| e.id == before.id).cloned();
-        if still_running.is_none()
-            && let Some(e) = self.data.entries.iter().find(|e| e.id == before.id)
-        {
-            self.data.settings.last_project_id = Some(e.project_id.clone());
-        }
-        if !clean {
-            let message = if still_running.is_some() {
-                EDITED_ELSEWHERE
-            } else {
-                ENDED_ELSEWHERE
-            };
-            self.upsert_notice(NoticeKind::EditedElsewhere, message.to_string());
-            return;
-        }
         match still_running {
-            Some(e) => self.replace_draft(e.title, e.content),
-            None => self.reset_draft_after_end(),
+            Some(_) if !clean => {
+                self.upsert_notice(NoticeKind::EditedElsewhere, EDITED_ELSEWHERE.to_string());
+            }
+            Some(e) => {
+                self.notices
+                    .retain(|n| n.kind != NoticeKind::EditedElsewhere);
+                self.replace_draft(e.title, e.content);
+            }
+            None => {
+                if let Some(e) = self.data.entries.iter().find(|e| e.id == before.id) {
+                    self.data.settings.last_project_id = Some(e.project_id.clone());
+                }
+                if clean {
+                    self.notices
+                        .retain(|n| n.kind != NoticeKind::EditedElsewhere);
+                } else {
+                    let message = ended_elsewhere_message(&self.draft.title, &self.draft.content);
+                    self.upsert_notice(NoticeKind::EditedElsewhere, message);
+                }
+                self.reset_draft_after_end();
+            }
         }
     }
 
@@ -1018,9 +1052,35 @@ impl<F: Fs> Session<F> {
                 }
                 (NoticeKind::Unreadable, message, note)
             }
+            LoadNotice::NewerVersion { version } => (
+                NoticeKind::NewerVersion,
+                "資料檔是由較新版本的打工人計時器建立的，為避免覆蓋，這次開啟期間的變更不會存檔。請改用較新的版本。".to_string(),
+                format!("newer data version {version}, saving blocked"),
+            ),
         };
         self.push_notice(kind, message);
         self.log(now, Action::Restore, None, Some(&note));
+    }
+
+    /// Items that failed to parse stay in the file but are invisible: say so once per open.
+    fn report_quarantined(&mut self, now: DateTime<Utc>) {
+        let d = &self.data;
+        let n = d.quarantined_clients.len()
+            + d.quarantined_projects.len()
+            + d.quarantined_entries.len();
+        if n == 0 {
+            return;
+        }
+        self.log(
+            now,
+            Action::Restore,
+            None,
+            Some(&format!("quarantined={n}")),
+        );
+        self.push_notice(
+            NoticeKind::Info,
+            format!("有 {n} 筆資料格式不正確，已另外保留在資料檔中，不會顯示在清單與合計裡。"),
+        );
     }
 
     fn log(&self, now: DateTime<Utc>, action: Action, entry: Option<&Entry>, note: Option<&str>) {
