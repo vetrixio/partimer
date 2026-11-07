@@ -70,17 +70,22 @@ fn check_pause(
 /// the form and the save, and typing the current minute.
 const FUTURE_TOLERANCE_SECS: i64 = 60;
 
-/// Validates a patch that finishes an entry; returns (end, paused_seconds).
+/// Validates a patch that finishes an entry; returns (end, paused_seconds). `stored` is the
+/// entry's current (start, end) when editing: a time left unchanged is not checked against
+/// `now`, so an entry saved while the clock was ahead can still be edited.
 fn check_finished(
     patch: &EntryPatch,
     now: DateTime<Utc>,
+    stored: Option<(DateTime<Utc>, Option<DateTime<Utc>>)>,
 ) -> Result<(DateTime<Utc>, i64), EditError> {
     let end = patch.end.ok_or(EditError::EndRequired)?;
     let latest = now + Duration::seconds(FUTURE_TOLERANCE_SECS);
-    if patch.start > latest {
+    let start_changed = stored.is_none_or(|(s, _)| s != patch.start);
+    let end_changed = stored.is_none_or(|(_, e)| e != Some(end));
+    if start_changed && patch.start > latest {
         return Err(EditError::StartInFuture);
     }
-    if end > latest {
+    if end_changed && end > latest {
         return Err(EditError::EndInFuture);
     }
     if end <= patch.start {
@@ -127,7 +132,8 @@ pub fn apply_edit(
             check_pause(patch.paused_minutes, patch.start, span_end)?,
         )
     } else {
-        let (end, paused) = check_finished(&patch, now)?;
+        let e = &data.entries[idx];
+        let (end, paused) = check_finished(&patch, now, Some((e.start, e.end)))?;
         (Some(end), paused)
     };
 
@@ -150,7 +156,7 @@ pub fn add_entry(data: &mut Data, patch: EntryPatch, now: DateTime<Utc>) -> Resu
         return Err(EditError::EndRequired);
     }
     check_project(data, &patch.project_id)?;
-    let (end, paused_seconds) = check_finished(&patch, now)?;
+    let (end, paused_seconds) = check_finished(&patch, now, None)?;
     let id = new_id();
     data.entries.push(Entry {
         extra: Default::default(),
@@ -577,6 +583,31 @@ mod tests {
         let p = patch("2026-11-06T01:00:00Z", Some("2026-11-06T12:01:00Z"));
         apply_edit(&mut d, "e1", p, now()).unwrap();
         assert_eq!(d.entries[0].end, Some(utc("2026-11-06T12:01:00Z")));
+    }
+
+    #[test]
+    fn stored_future_times_do_not_block_other_edits() {
+        // Saved while the clock was ahead: start and end are already hours after `now`.
+        let mut d = data();
+        d.entries.push(entry(
+            "f1",
+            "2026-11-06T14:00:00Z",
+            Some("2026-11-06T15:00:00Z"),
+        ));
+        let p = patch("2026-11-06T14:00:00Z", Some("2026-11-06T15:00:00Z"));
+        apply_edit(&mut d, "f1", p, now()).unwrap();
+        assert_eq!(d.entries[0].title, "新");
+        // Moving a time to another future value is still rejected.
+        let p = patch("2026-11-06T14:00:00Z", Some("2026-11-06T15:30:00Z"));
+        assert_eq!(
+            apply_edit(&mut d, "f1", p, now()),
+            Err(EditError::EndInFuture)
+        );
+        let p = patch("2026-11-06T14:10:00Z", Some("2026-11-06T15:00:00Z"));
+        assert_eq!(
+            apply_edit(&mut d, "f1", p, now()),
+            Err(EditError::StartInFuture)
+        );
     }
 
     #[test]
