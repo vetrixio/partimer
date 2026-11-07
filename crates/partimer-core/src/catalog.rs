@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use chrono::{DateTime, Utc};
 
 use crate::duration::{effective_seconds, round_minutes};
@@ -201,29 +203,33 @@ pub fn client_deletion_impact(
     if !data.clients.iter().any(|c| c.id == id) {
         return Err(CatalogError::NotFound);
     }
-    let in_client = |project_id: &str| {
-        data.projects
-            .iter()
-            .any(|p| p.id == project_id && p.client_id == id)
-    };
+    let in_client: HashSet<&str> = data
+        .projects
+        .iter()
+        .filter(|p| p.client_id == id)
+        .map(|p| p.id.as_str())
+        .collect();
     Ok(impact_of(
-        data.entries.iter().filter(|e| in_client(&e.project_id)),
+        data.entries
+            .iter()
+            .filter(|e| in_client.contains(e.project_id.as_str())),
         now,
     ))
 }
 
 /// Removes the projects with the given ids and their entries; returns the removed entries.
 fn remove_projects(data: &mut Data, ids: &[Id]) -> Vec<Entry> {
-    data.projects.retain(|p| !ids.contains(&p.id));
+    let ids: HashSet<&str> = ids.iter().map(String::as_str).collect();
+    data.projects.retain(|p| !ids.contains(p.id.as_str()));
     let (removed, kept): (Vec<Entry>, Vec<Entry>) = std::mem::take(&mut data.entries)
         .into_iter()
-        .partition(|e| ids.contains(&e.project_id));
+        .partition(|e| ids.contains(e.project_id.as_str()));
     data.entries = kept;
     if data
         .settings
         .last_project_id
         .as_ref()
-        .is_some_and(|id| ids.contains(id))
+        .is_some_and(|id| ids.contains(id.as_str()))
     {
         data.settings.last_project_id = None;
     }
@@ -277,7 +283,6 @@ pub fn active_groups(data: &Data) -> Vec<(&Client, Vec<&Project>)> {
 mod tests {
     use super::*;
     use crate::testutil::utc;
-    use chrono::{DateTime, Utc};
 
     fn entry(project_id: &str, start: &str, end: Option<&str>) -> Entry {
         Entry {
@@ -355,6 +360,32 @@ mod tests {
         add_project(&mut d, "A", "P").unwrap();
         add_project(&mut d, "B", "P").unwrap();
         assert_eq!(d.projects.len(), 2);
+    }
+
+    #[test]
+    fn names_compare_case_sensitively_after_trim() {
+        // Current rule: surrounding spaces are ignored, letter case is not.
+        let mut d = Data::default();
+        add_project(&mut d, "Acme", "Site").unwrap();
+        add_project(&mut d, "acme", "site").unwrap();
+        assert_eq!(d.clients.len(), 2);
+        add_project(&mut d, "Acme", "SITE").unwrap();
+        assert_eq!(
+            add_project(&mut d, " Acme ", " Site "),
+            Err(CatalogError::DuplicateProject)
+        );
+        let acme = d
+            .clients
+            .iter()
+            .find(|c| c.name == "Acme")
+            .unwrap()
+            .id
+            .clone();
+        assert_eq!(rename_client(&mut d, &acme, "ACME"), Ok(()));
+        assert_eq!(
+            rename_client(&mut d, &acme, " acme "),
+            Err(CatalogError::DuplicateClient)
+        );
     }
 
     #[test]
