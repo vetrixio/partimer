@@ -18,6 +18,8 @@ pub enum TimerError {
     EndNotAfterStart,
     #[error("暫停時間不能比整段時間長")]
     PauseExceedsSpan,
+    #[error("結束時間不能晚於現在")]
+    EndInFuture,
 }
 
 /// The unfinished entry, if any.
@@ -76,6 +78,8 @@ pub fn resume(data: &mut Data, now: DateTime<Utc>) -> Result<Id, TimerError> {
 }
 
 /// Finish the running entry. While paused it ends at the pause start and that pause is not counted.
+/// Never fails on odd times (pause start or clock before the start): the end is clamped to the
+/// start and the pause total to the span, so the entry is never negative.
 pub fn stop(
     data: &mut Data,
     title: &str,
@@ -83,15 +87,21 @@ pub fn stop(
     now: DateTime<Utc>,
 ) -> Result<Id, TimerError> {
     let e = running_mut(data).ok_or(TimerError::NotRunning)?;
-    e.end = Some(e.pause_started_at.take().unwrap_or(now));
+    let end = e.pause_started_at.take().unwrap_or(now).max(e.start);
+    e.end = Some(end);
+    e.paused_seconds = e.paused_seconds.clamp(0, (end - e.start).num_seconds());
     e.title = title.to_string();
     e.content = content.to_string();
     Ok(e.id.clone())
 }
 
-/// Finish the running entry at a chosen time (12h reminder). Leaves data untouched on error.
-pub fn stop_at(data: &mut Data, end: DateTime<Utc>, _now: DateTime<Utc>) -> Result<Id, TimerError> {
+/// Finish the running entry at a chosen time (12h reminder), which may not be after `now`.
+/// Leaves data untouched on error.
+pub fn stop_at(data: &mut Data, end: DateTime<Utc>, now: DateTime<Utc>) -> Result<Id, TimerError> {
     let e = running_mut(data).ok_or(TimerError::NotRunning)?;
+    if end > now {
+        return Err(TimerError::EndInFuture);
+    }
     if end <= e.start {
         return Err(TimerError::EndNotAfterStart);
     }
@@ -322,6 +332,67 @@ mod tests {
         assert_eq!(e.end, Some(utc("2026-10-06T01:30:00Z")));
         assert_eq!(e.paused_seconds, 0);
         assert_eq!(e.pause_started_at, None);
+    }
+
+    #[test]
+    fn stop_with_pause_start_before_start_never_ends_before_start() {
+        // Corrupt data (hand-edited file, or the clock jumped back): pause before start.
+        let (mut d, _) = started();
+        d.entries[0].pause_started_at = Some(utc("2026-10-06T00:30:00Z"));
+        d.entries[0].paused_seconds = 600;
+        stop(&mut d, "t", "", utc("2026-10-06T05:00:00Z")).unwrap();
+        let e = &d.entries[0];
+        assert_eq!(e.end, Some(e.start));
+        assert_eq!(e.paused_seconds, 0);
+        assert_eq!(
+            crate::duration::effective_seconds(e, utc("2026-10-06T05:00:00Z")),
+            0
+        );
+    }
+
+    #[test]
+    fn stop_with_clock_behind_start_never_ends_before_start() {
+        let (mut d, _) = started();
+        stop(&mut d, "t", "", utc("2026-10-06T00:59:00Z")).unwrap();
+        let e = &d.entries[0];
+        assert_eq!(e.end, Some(utc("2026-10-06T01:00:00Z")));
+    }
+
+    #[test]
+    fn stop_at_end_equal_to_pause_start() {
+        let (mut d, _) = started();
+        pause(&mut d, utc("2026-10-06T01:10:00Z")).unwrap();
+        resume(&mut d, utc("2026-10-06T01:20:00Z")).unwrap();
+        pause(&mut d, utc("2026-10-06T02:00:00Z")).unwrap();
+        stop_at(
+            &mut d,
+            utc("2026-10-06T02:00:00Z"),
+            utc("2026-10-06T20:00:00Z"),
+        )
+        .unwrap();
+        let e = &d.entries[0];
+        assert_eq!(e.end, Some(utc("2026-10-06T02:00:00Z")));
+        assert_eq!(e.paused_seconds, 600);
+        assert_eq!(e.pause_started_at, None);
+    }
+
+    #[test]
+    fn stop_at_rejects_end_after_now() {
+        let (mut d, _) = started();
+        let before = d.clone();
+        let r = stop_at(
+            &mut d,
+            utc("2026-10-06T03:00:01Z"),
+            utc("2026-10-06T03:00:00Z"),
+        );
+        assert_eq!(r, Err(TimerError::EndInFuture));
+        assert_eq!(d, before);
+        stop_at(
+            &mut d,
+            utc("2026-10-06T03:00:00Z"),
+            utc("2026-10-06T03:00:00Z"),
+        )
+        .unwrap();
     }
 
     #[test]

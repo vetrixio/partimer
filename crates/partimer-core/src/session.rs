@@ -24,7 +24,6 @@ const ENDED_ELSEWHERE: &str = "這筆已在紀錄視窗結束，面板上未儲�
 const REPAIRED_RUNNING: &str =
     "發現多筆同時在計時的紀錄，已保留最新的一筆，其餘已在下一筆開始時結束，請到紀錄視窗確認。";
 const REPAIRED_RUNNING_NOTE: &str = "repaired-multiple-running";
-const END_IN_FUTURE: &str = "結束時間不能晚於現在";
 
 fn msg(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -310,12 +309,6 @@ impl<F: Fs> Session<F> {
         now: DateTime<Utc>,
     ) -> Result<(), String> {
         let end = parse_local_input(self.zone.as_ref(), end_local).map_err(msg)?;
-        if self.running().is_none() {
-            return Err(msg(TimerError::NotRunning));
-        }
-        if end > now {
-            return Err(END_IN_FUTURE.to_string());
-        }
         let id = timer::stop_at(&mut self.data, end, now).map_err(msg)?;
         if let Some(e) = self.data.entries.iter_mut().find(|e| e.id == id) {
             e.title = title.to_string();

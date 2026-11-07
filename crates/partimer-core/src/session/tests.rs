@@ -887,9 +887,9 @@ fn stop_at_local_writes_text_and_replaces_draft() {
         s.stop_at_local("A", "x", "2026-10-06T08:00", at(14 * H)),
         Err("結束時間必須晚於開始時間".to_string())
     );
-    assert!(
-        s.stop_at_local("A", "x", "2026-10-07T09:00", at(14 * H))
-            .is_err()
+    assert_eq!(
+        s.stop_at_local("A", "x", "2026-10-07T09:00", at(14 * H)),
+        Err("結束時間不能晚於現在".to_string())
     );
     let mem = s.data.entries.iter().find(|e| e.id == id).unwrap();
     assert_eq!((mem.end, mem.content.as_str()), (None, ""));
