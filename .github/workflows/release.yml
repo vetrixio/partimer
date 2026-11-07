@@ -32,7 +32,8 @@ jobs:
       - name: CHANGELOG.md has a section for this version
         env:
           TAG: ${{ github.ref_name }}
-        run: scripts/changelog-section.sh "${TAG#v}"
+        # The section of the version itself: a test tag v1.2.3-rc.N uses the v1.2.3 notes.
+        run: scripts/changelog-section.sh "$(printf '%s' "${TAG#v}" | sed -E 's/-rc\.[0-9]+$//')"
       - name: Install Linux dependencies
         timeout-minutes: 15
         run: |
@@ -82,7 +83,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          scripts/changelog-section.sh "${TAG#v}" > notes.md
+          version="$(printf '%s' "${TAG#v}" | sed -E 's/-rc\.[0-9]+$//')"
+          scripts/changelog-section.sh "$version" > notes.md
           if gh release view "$TAG" >/dev/null 2>&1; then
             # A rerun: keep the release and its files, refresh the notes.
             gh release edit "$TAG" --notes-file notes.md
