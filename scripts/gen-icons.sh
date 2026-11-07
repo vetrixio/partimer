@@ -15,7 +15,9 @@ rm -rf src-tauri/icons/android src-tauri/icons/ios
 
 # Tray PNGs. `tauri icon --png <sizes>` takes a comma-separated list of pixel
 # sizes and writes only <size>x<size>.png into the output dir (verified with
-# @tauri-apps/cli 2.12.4: with --png the default icon set is not generated).
+# @tauri-apps/cli 2.12.4: with --png the default icon set is not generated, so each
+# tray source is rendered once, at the three sizes only). Each file is checked before
+# it is moved, so a changed CLI fails loudly instead of leaving stale PNGs.
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p src-tauri/icons/tray
@@ -25,6 +27,11 @@ for name in "${TRAY_NAMES[@]}"; do
   npm exec --no -- tauri icon "assets/design/tray/$name.svg" \
     --png "$(IFS=,; echo "${TRAY_SIZES[*]}")" -o "$out"
   for size in "${TRAY_SIZES[@]}"; do
-    mv "$out/${size}x${size}.png" "src-tauri/icons/tray/$name-$size.png"
+    png="$out/${size}x${size}.png"
+    if [[ ! -f "$png" ]]; then
+      echo "gen-icons: tauri icon did not write $png (CLI output format changed?)" >&2
+      exit 1
+    fi
+    mv "$png" "src-tauri/icons/tray/$name-$size.png"
   done
 done
