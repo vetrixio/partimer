@@ -76,10 +76,63 @@ jobs:
         with:
           toolchain: ${{ steps.toolchain.outputs.channel }}
           components: clippy, rustfmt
+      # Shared with the release workflow's verify job (Ubuntu), which runs the same tests.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: app-${{ matrix.os }}
       - run: npm ci
       - run: npm run check
       - run: npm test
       - run: npm run build
       - run: cargo clippy --workspace -- -D warnings
       - run: cargo test --workspace
+
+  # Compiles the release binaries on main and saves the compiled dependencies, so the release
+  # workflow (a tag can only read caches saved on main) only has to compile partimer itself.
+  # Nothing is uploaded; the matrix and build command match the release `build` job.
+  release-cache:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            args: --target universal-apple-darwin
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+          - os: windows-latest
+            args: ''
+            rust-targets: ''
+          - os: ubuntu-24.04
+            args: ''
+            rust-targets: ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        timeout-minutes: 15
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      # The Rust version comes from rust-toolchain.toml only.
+      - name: Read the Rust toolchain version
+        id: toolchain
+        shell: bash
+        run: |
+          channel="$(sed -nE 's/^channel *= *"([^"]+)".*/\1/p' rust-toolchain.toml)"
+          test -n "$channel" || { echo "::error::no channel in rust-toolchain.toml"; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1 (2026-10-16)
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          targets: ${{ matrix.rust-targets }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: release-${{ matrix.os }}
+      - run: npm ci
+      - run: npm run tauri -- build --no-bundle ${{ matrix.args }}
