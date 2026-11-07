@@ -24,6 +24,7 @@ const ENDED_ELSEWHERE: &str = "這筆已在紀錄視窗結束，面板上未儲�
 const REPAIRED_RUNNING: &str =
     "發現多筆同時在計時的紀錄，已保留最新的一筆，其餘已在下一筆開始時結束，請到紀錄視窗確認。";
 const REPAIRED_RUNNING_NOTE: &str = "repaired-multiple-running";
+const ARCHIVED_PROJECT: &str = "這個專案已封存，請先在設定中取消封存";
 
 fn msg(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -56,6 +57,14 @@ fn ended_elsewhere_message(title: &str, content: &str) -> String {
             "{ENDED_ELSEWHERE}。原文：{}（請到紀錄視窗補寫）",
             parts.join("，")
         )
+    }
+}
+
+fn project_option(p: &crate::model::Project) -> ProjectOption {
+    ProjectOption {
+        id: p.id.clone(),
+        name: p.name.clone(),
+        color: p.color,
     }
 }
 
@@ -264,7 +273,16 @@ impl<F: Fs> Session<F> {
         if !self.data.projects.iter().any(|p| p.id == project_id) {
             return Err(msg(TimerError::UnknownProject));
         }
-        match self.running().map(|e| e.project_id.clone()) {
+        let running_project = self.running().map(|e| e.project_id.clone());
+        // Only what the panel lists can be picked: archived projects (or clients) are hidden,
+        // except the running one.
+        let visible = catalog::active_groups(&self.data)
+            .iter()
+            .any(|(_, ps)| ps.iter().any(|p| p.id == project_id));
+        if !visible && running_project.as_deref() != Some(project_id) {
+            return Err(ARCHIVED_PROJECT.to_string());
+        }
+        match running_project {
             Some(current) if current == project_id => Ok(()),
             Some(_) => {
                 let old = timer::stop(&mut self.data, title, content, now).map_err(msg)?;
@@ -376,11 +394,7 @@ impl<F: Fs> Session<F> {
             .projects
             .iter()
             .filter(|p| query.client_id.as_ref().is_none_or(|c| &p.client_id == c))
-            .map(|p| ProjectOption {
-                id: p.id.clone(),
-                name: p.name.clone(),
-                color: p.color,
-            })
+            .map(project_option)
             .collect();
         projects.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -731,17 +745,12 @@ impl<F: Fs> Session<F> {
 
     /// Visible groups, plus the running project even when it is archived.
     fn panel_groups(&self) -> Vec<ProjectGroup> {
-        let option = |p: &crate::model::Project| ProjectOption {
-            id: p.id.clone(),
-            name: p.name.clone(),
-            color: p.color,
-        };
         let mut groups: Vec<ProjectGroup> = catalog::active_groups(&self.data)
             .into_iter()
             .map(|(c, ps)| ProjectGroup {
                 client_id: c.id.clone(),
                 client_name: c.name.clone(),
-                projects: ps.into_iter().map(option).collect(),
+                projects: ps.into_iter().map(project_option).collect(),
             })
             .collect();
         let hidden_running = self
@@ -754,11 +763,11 @@ impl<F: Fs> Session<F> {
             .and_then(|e| self.data.projects.iter().find(|p| p.id == e.project_id));
         if let Some(p) = hidden_running {
             match groups.iter_mut().find(|g| g.client_id == p.client_id) {
-                Some(g) => g.projects.push(option(p)),
+                Some(g) => g.projects.push(project_option(p)),
                 None => groups.push(ProjectGroup {
                     client_id: p.client_id.clone(),
                     client_name: self.labels(&p.id).1,
-                    projects: vec![option(p)],
+                    projects: vec![project_option(p)],
                 }),
             }
         }

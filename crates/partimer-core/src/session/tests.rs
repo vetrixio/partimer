@@ -1400,3 +1400,55 @@ fn activity_log_failure_does_not_affect_saving() {
     assert!(!s.dirty);
     assert_eq!(log_text(&s), "");
 }
+
+#[test]
+fn select_project_rejects_archived_and_unknown() {
+    let mut d = base_data();
+    d.projects[1].archived = true; // p2
+    d.clients.push(Client {
+        extra: Default::default(),
+        id: "c2".into(),
+        name: "封存客戶".into(),
+        archived: true,
+    });
+    d.projects.push(Project {
+        extra: Default::default(),
+        id: "p3".into(),
+        client_id: "c2".into(),
+        name: "藏起來".into(),
+        color: 2,
+        archived: false,
+    });
+    let mut s = open(seed(&d), at(0));
+    let generation = s.draft.generation;
+    for id in ["p2", "p3"] {
+        assert_eq!(
+            s.select_project(id, "首頁切版", "", at(1)),
+            Err("這個專案已封存，請先在設定中取消封存".to_string())
+        );
+    }
+    assert_eq!(
+        s.select_project("nope", "首頁切版", "", at(1)),
+        Err("找不到這個專案".to_string())
+    );
+    let p = s.panel_state(at(1));
+    assert_eq!(p.selected_project_id.as_deref(), Some("p1"));
+    assert_eq!(p.draft.generation, generation);
+    assert_eq!(on_disk(&s).settings.last_project_id.as_deref(), Some("p1"));
+
+    // Running: switching to an archived project is rejected too, nothing is stopped.
+    s.start("p1", "A", "", at(2)).unwrap();
+    let id = running_id(&s, at(3));
+    assert!(s.select_project("p2", "A", "", at(4)).is_err());
+    assert_eq!(running_id(&s, at(5)), id);
+    assert_eq!(count_action(&s, "SWITCH"), 0);
+}
+
+#[test]
+fn select_running_archived_project_is_a_noop() {
+    let mut s = open(seeded(), at(0));
+    s.start("p1", "A", "", at(0)).unwrap();
+    s.set_project_archived("p1", true, at(1)).unwrap();
+    s.select_project("p1", "A", "", at(2)).unwrap();
+    assert_eq!(s.panel_state(at(3)).status, TimerStatus::Running);
+}
