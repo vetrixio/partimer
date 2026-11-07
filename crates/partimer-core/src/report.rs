@@ -1,9 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
 
 use crate::duration::{effective_seconds, hours_decimal, round_minutes};
-use crate::model::{Data, Entry, Id};
+use crate::model::{Client, Data, Entry, Id, Project};
 use crate::zone::{LocalZone, format_hhmm, local_date};
 
 const CSV_HEADER: &str = "日期,客戶,專案,開始,結束,分鐘,小時,暫停分鐘,標題,內容";
@@ -30,10 +30,17 @@ pub fn filtered_entries<'a>(data: &'a Data, f: &Filter, zone: &dyn LocalZone) ->
         .project_id
         .as_ref()
         .filter(|id| data.projects.iter().any(|p| &p.id == *id));
-    let client = f
+    let client_projects: Option<HashSet<&str>> = f
         .client_id
         .as_ref()
-        .filter(|id| data.clients.iter().any(|c| &c.id == *id));
+        .filter(|id| data.clients.iter().any(|c| &c.id == *id))
+        .map(|cid| {
+            data.projects
+                .iter()
+                .filter(|p| &p.client_id == cid)
+                .map(|p| p.id.as_str())
+                .collect()
+        });
     data.entries
         .iter()
         .filter(|e| {
@@ -44,11 +51,8 @@ pub fn filtered_entries<'a>(data: &'a Data, f: &Filter, zone: &dyn LocalZone) ->
             if let Some(pid) = project {
                 return &e.project_id == pid;
             }
-            if let Some(cid) = client {
-                return data
-                    .projects
-                    .iter()
-                    .any(|p| p.id == e.project_id && &p.client_id == cid);
+            if let Some(ps) = &client_projects {
+                return ps.contains(e.project_id.as_str());
             }
             true
         })
@@ -119,18 +123,20 @@ pub fn today_total_seconds(data: &Data, zone: &dyn LocalZone, now: DateTime<Utc>
 
 /// CSV per spec section 10: BOM, CRLF, finished entries only, oldest first.
 pub fn export_csv(data: &Data, f: &Filter, zone: &dyn LocalZone) -> Vec<u8> {
-    let mut rows: Vec<&Entry> = filtered_entries(data, f, zone)
+    let mut rows: Vec<(&Entry, DateTime<Utc>)> = filtered_entries(data, f, zone)
         .into_iter()
-        .filter(|e| e.end.is_some())
+        .filter_map(|e| e.end.map(|end| (e, end)))
         .collect();
-    rows.sort_by_key(|e| e.start);
+    rows.sort_by_key(|(e, _)| e.start);
+    let projects: HashMap<&str, &Project> =
+        data.projects.iter().map(|p| (p.id.as_str(), p)).collect();
+    let clients: HashMap<&str, &Client> = data.clients.iter().map(|c| (c.id.as_str(), c)).collect();
 
     let mut out = String::from(CSV_HEADER);
     out.push_str("\r\n");
-    for e in rows {
-        let Some(end) = e.end else { continue };
-        let project = data.projects.iter().find(|p| p.id == e.project_id);
-        let client = project.and_then(|p| data.clients.iter().find(|c| c.id == p.client_id));
+    for (e, end) in rows {
+        let project = projects.get(e.project_id.as_str());
+        let client = project.and_then(|p| clients.get(p.client_id.as_str()));
         let minutes = round_minutes(effective_seconds(e, end));
         let cells = [
             local_date(zone, e.start).format("%Y-%m-%d").to_string(),
@@ -171,7 +177,6 @@ fn csv_field(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Client, Project};
     use crate::testutil::{tz, utc};
 
     fn e(id: &str, pid: &str, start: &str, end: Option<&str>) -> Entry {
@@ -298,6 +303,60 @@ mod tests {
         d.entries.push(e("run", "p1", "2026-10-06T03:00:00Z", None));
         let s = summarize(&d, &f(2026, 10), z.as_ref());
         assert_eq!(s.total_minutes, 60);
+    }
+
+    #[test]
+    fn summary_subtracts_paused_time() {
+        let z = tz("Asia/Taipei");
+        let mut d = data();
+        let mut a = e(
+            "a",
+            "p1",
+            "2026-10-06T01:00:00Z",
+            Some("2026-10-06T03:00:00Z"),
+        );
+        a.paused_seconds = 20 * 60 + 29;
+        d.entries.push(a);
+        let s = summarize(&d, &f(2026, 10), z.as_ref());
+        assert_eq!(s.total_minutes, 100);
+        assert_eq!(s.per_project, vec![("p1".to_string(), 100)]);
+    }
+
+    #[test]
+    fn empty_month_is_zero_and_empty() {
+        let z = tz("Asia/Taipei");
+        let mut d = data();
+        d.entries.push(e(
+            "a",
+            "p1",
+            "2026-10-06T01:00:00Z",
+            Some("2026-10-06T02:00:00Z"),
+        ));
+        let fl = f(2026, 11);
+        let s = summarize(&d, &fl, z.as_ref());
+        assert_eq!(s.total_minutes, 0);
+        assert!(s.per_project.is_empty());
+        assert!(day_groups(&d, &fl, z.as_ref()).is_empty());
+        let csv = String::from_utf8(export_csv(&d, &fl, z.as_ref())).unwrap();
+        assert_eq!(csv, format!("\u{feff}{CSV_HEADER}\r\n"));
+    }
+
+    #[test]
+    fn unknown_project_filter_falls_through_to_client() {
+        let z = tz("Asia/Taipei");
+        let mut d = data();
+        for (id, p) in [("a", "p1"), ("b", "p2"), ("c", "p3")] {
+            d.entries.push(e(
+                id,
+                p,
+                "2026-10-06T01:00:00Z",
+                Some("2026-10-06T02:00:00Z"),
+            ));
+        }
+        let mut fl = f(2026, 10);
+        fl.client_id = Some("c2".into());
+        fl.project_id = Some("deleted".into());
+        assert_eq!(ids(&filtered_entries(&d, &fl, z.as_ref())), vec!["c"]);
     }
 
     #[test]
