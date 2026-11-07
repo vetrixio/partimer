@@ -893,6 +893,10 @@ impl<F: Fs> Session<F> {
                 if self.draft.title == e.title && self.draft.content == e.content {
                     // The records window saved exactly the panel's text: nothing to decide.
                     self.clear_draft_conflict();
+                } else if e.title == before.title && e.content == before.content {
+                    // Only time / project / pause changed: saving the panel text writes just
+                    // title and content, so nothing of this edit is at risk. Keep the draft
+                    // (and any earlier conflict) as it is.
                 } else {
                     self.draft_conflict = true;
                     self.upsert_notice(NoticeKind::EditedElsewhere, EDITED_ELSEWHERE.to_string());

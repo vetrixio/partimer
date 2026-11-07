@@ -1466,3 +1466,22 @@ fn timer_status_and_notices_match_panel_state() {
     assert_eq!(s.notices(), s.panel_state(at(200)).notices.as_slice());
     assert_eq!(s.notices().len(), 1);
 }
+
+#[test]
+fn time_only_records_edit_keeps_dirty_draft_without_conflict() {
+    let mut s = open(seeded(), at(0));
+    s.start("p1", "A", "B", at(0)).unwrap();
+    let id = running_id(&s, at(1));
+    s.set_draft("A".into(), "打字中".into(), s.draft.generation);
+    let mut f = s.entry_form(&id).unwrap();
+    f.start_local = "2026-10-06T08:30".into();
+    f.project_id = "p2".into();
+    s.save_entry(Some(&id), f, at(60)).unwrap();
+    assert!(notice(&s, NoticeKind::EditedElsewhere).is_none());
+    assert!(!s.panel_state(at(61)).draft_saved);
+    s.flush_on_exit(at(120));
+    let e = disk_entry(&s, &id);
+    assert_eq!(e.content, "打字中");
+    assert_eq!(e.start, utc("2026-10-06T00:30:00Z"));
+    assert_eq!(e.project_id, "p2");
+}
