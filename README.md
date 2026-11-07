@@ -127,3 +127,7 @@ xattr -dr com.apple.quarantine "/Applications/打工人計時器.app"
 - **Ubuntu Wayland 下全域快捷鍵無效**，請照上面「快捷鍵」的方式設定系統自訂快捷鍵。
 - Ubuntu 頂列圖示旁能不能顯示時間要看桌面環境；看不到時請用浮動小時鐘。
 - 沒有程式碼簽章，第一次開啟要照上面的步驟允許一次。
+
+## 維護者
+
+發佈與重新發佈的步驟見 [docs/releasing.md](docs/releasing.md)。
