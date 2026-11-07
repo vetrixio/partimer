@@ -72,7 +72,7 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release for $TAG already exists"
           else
-            gh release create "$TAG" --draft --verify-tag --title "打工人計時器 $TAG" --notes ""
+            gh release create "$TAG" --draft --verify-tag --title "$TAG" --notes ""
           fi
 
   build:
@@ -124,7 +124,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 打工人計時器 ${{ github.ref_name }}
+          releaseName: ${{ github.ref_name }}
           releaseDraft: true
           # v1 of the action renamed `assetNamePattern` to `releaseAssetNamePattern`.
           # Keeps every download file name in English.
