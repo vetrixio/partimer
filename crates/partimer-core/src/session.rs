@@ -25,6 +25,8 @@ const REPAIRED_RUNNING: &str =
     "發現多筆同時在計時的紀錄，已保留最新的一筆，其餘已在下一筆開始時結束，請到紀錄視窗確認。";
 const REPAIRED_RUNNING_NOTE: &str = "repaired-multiple-running";
 const ARCHIVED_PROJECT: &str = "這個專案已封存，請先在設定中取消封存";
+const CLOCK_WENT_BACK: &str = "時鐘似乎被往回調過，剛結束的這筆時長可能不正確，請到紀錄視窗確認。";
+const CLOCK_WENT_BACK_NOTE: &str = "clock-went-back";
 
 fn msg(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -235,8 +237,8 @@ impl<F: Fs> Session<F> {
 
     /// Writes title/content into the running entry and ends it in one step.
     pub fn stop(&mut self, title: &str, content: &str, now: DateTime<Utc>) -> Result<(), String> {
-        let id = timer::stop(&mut self.data, title, content, now).map_err(msg)?;
-        self.after_end(&id, Action::Stop, now);
+        let (id, note) = self.stop_running(title, content, now)?;
+        self.after_end(&id, Action::Stop, note, now);
         Ok(())
     }
 
@@ -296,8 +298,9 @@ impl<F: Fs> Session<F> {
         match running_project {
             Some(current) if current == project_id => Ok(()),
             Some(_) => {
-                let old = timer::stop(&mut self.data, title, content, now).map_err(msg)?;
-                self.log_entry(now, Action::Switch, &old);
+                let (old, note) = self.stop_running(title, content, now)?;
+                let entry = self.data.entries.iter().find(|e| e.id == old);
+                self.log(now, Action::Switch, entry, note);
                 let next_title = timer::last_title_for_project(&self.data, project_id);
                 match timer::start(&mut self.data, project_id, &next_title, "", now) {
                     Ok(new) => {
@@ -355,7 +358,7 @@ impl<F: Fs> Session<F> {
             e.title = title.to_string();
             e.content = content.to_string();
         }
-        self.after_end(&id, Action::AutoStop, now);
+        self.after_end(&id, Action::AutoStop, None, now);
         Ok(())
     }
 
@@ -871,12 +874,33 @@ impl<F: Fs> Session<F> {
         self.reset_reminders(now);
     }
 
+    /// `timer::stop`, plus a warning when the clock is behind the entry's start (it was set
+    /// back): the end is clamped to the start, so the entry silently gets 0 minutes otherwise.
+    /// Returns the entry id and the activity-log note to record with it.
+    fn stop_running(
+        &mut self,
+        title: &str,
+        content: &str,
+        now: DateTime<Utc>,
+    ) -> Result<(Id, Option<&'static str>), String> {
+        let behind = self
+            .running()
+            .is_some_and(|e| e.pause_started_at.unwrap_or(now) < e.start);
+        let id = timer::stop(&mut self.data, title, content, now).map_err(msg)?;
+        // Info notices are shared by several messages: add this one, never overwrite another.
+        if behind && !self.notices.iter().any(|n| n.message == CLOCK_WENT_BACK) {
+            self.push_notice(NoticeKind::Info, CLOCK_WENT_BACK.to_string());
+        }
+        Ok((id, behind.then_some(CLOCK_WENT_BACK_NOTE)))
+    }
+
     /// Shared tail of stop / auto-stop: remember the project, log, detach the draft, save.
-    fn after_end(&mut self, id: &str, action: Action, now: DateTime<Utc>) {
+    fn after_end(&mut self, id: &str, action: Action, note: Option<&str>, now: DateTime<Utc>) {
         if let Some(e) = self.data.entries.iter().find(|e| e.id == id) {
             self.data.settings.last_project_id = Some(e.project_id.clone());
         }
-        self.log_entry(now, action, id);
+        let entry = self.data.entries.iter().find(|e| e.id == id);
+        self.log(now, action, entry, note);
         self.reset_draft_after_end();
         self.persist(now);
     }

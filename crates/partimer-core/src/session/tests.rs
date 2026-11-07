@@ -1485,3 +1485,36 @@ fn time_only_records_edit_keeps_dirty_draft_without_conflict() {
     assert_eq!(e.start, utc("2026-10-06T00:30:00Z"));
     assert_eq!(e.project_id, "p2");
 }
+
+#[test]
+fn stop_after_clock_jumped_back_warns_and_logs() {
+    let mut s = open(seeded(), at(0));
+    s.start("p1", "A", "", at(100)).unwrap();
+    let id = running_id(&s, at(101));
+    s.stop("A", "", at(40)).unwrap();
+    let e = disk_entry(&s, &id);
+    assert_eq!(e.end, Some(e.start));
+    let n = notice(&s, NoticeKind::Info).expect("clock notice");
+    assert_eq!(
+        n.message,
+        "時鐘似乎被往回調過，剛結束的這筆時長可能不正確，請到紀錄視窗確認。"
+    );
+    assert!(n.dismissable);
+    assert!(log_text(&s).contains("\tSTOP\t") && log_text(&s).contains("note=clock-went-back"));
+
+    // Switching projects has the same guard.
+    s.dismiss_notice(n.id);
+    s.start("p1", "A", "", at(200)).unwrap();
+    s.select_project("p2", "A", "", at(150)).unwrap();
+    assert!(notice(&s, NoticeKind::Info).is_some());
+    assert_eq!(log_text(&s).matches("note=clock-went-back").count(), 2);
+}
+
+#[test]
+fn normal_stop_has_no_clock_notice() {
+    let mut s = open(seeded(), at(0));
+    s.start("p1", "A", "", at(0)).unwrap();
+    s.stop("A", "", at(60)).unwrap();
+    assert!(notice(&s, NoticeKind::Info).is_none());
+    assert!(!log_text(&s).contains("clock-went-back"));
+}
