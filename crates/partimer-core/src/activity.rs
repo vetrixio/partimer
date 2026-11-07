@@ -183,11 +183,18 @@ mod tests {
     #[test]
     fn append_failure_is_silent() {
         let fs = MemFs::new();
-        fs.fail_writes.set(true);
         let paths = Paths {
             dir: PathBuf::from("/d"),
         };
-        append(&fs, &paths, "x\n");
-        assert!(fs.get(&paths.activity_log()).is_none());
+        // Appending really writes (so a no-op would fail this test)…
+        append(&fs, &paths, "a\n");
+        assert_eq!(fs.get(&paths.activity_log()).unwrap(), b"a\n");
+        // …and a failing append returns quietly without touching the log.
+        fs.fail_appends.set(true);
+        append(&fs, &paths, "b\n");
+        assert_eq!(fs.get(&paths.activity_log()).unwrap(), b"a\n");
+        fs.fail_appends.set(false);
+        append(&fs, &paths, "c\n");
+        assert_eq!(fs.get(&paths.activity_log()).unwrap(), b"a\nc\n");
     }
 }

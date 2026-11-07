@@ -26,6 +26,8 @@ pub struct MemFs {
     pub fail_reads_of: std::cell::RefCell<Option<std::path::PathBuf>>,
     /// When true, only `write_sync` fails (with `StorageFull`).
     pub fail_write_syncs: std::cell::Cell<bool>,
+    /// When true, only `append` fails (with `PermissionDenied`).
+    pub fail_appends: std::cell::Cell<bool>,
     /// When true, `list` fails with `PermissionDenied`.
     pub fail_lists: std::cell::Cell<bool>,
     /// When true, `exists` answers "maybe" (like `RealFs` on a permission error): true.
@@ -131,6 +133,9 @@ impl crate::storage::Fs for MemFs {
 
     fn append(&self, p: &std::path::Path, b: &[u8]) -> std::io::Result<()> {
         self.check_write()?;
+        if self.fail_appends.get() {
+            return Err(std::io::ErrorKind::PermissionDenied.into());
+        }
         self.files
             .borrow_mut()
             .entry(p.to_path_buf())

@@ -1386,3 +1386,17 @@ fn corrupt_file_that_cannot_be_kept_names_the_reason() {
     );
     assert_eq!(s.fs.get(&paths().data()).unwrap(), b"{broken");
 }
+
+#[test]
+fn activity_log_failure_does_not_affect_saving() {
+    let fs = seeded();
+    fs.fail_appends.set(true);
+    let mut s = open(fs, at(0));
+    s.start("p1", "A", "", at(0)).unwrap();
+    let id = running_id(&s, at(1));
+    s.stop("A", "寫完", at(60)).unwrap();
+    assert_eq!(disk_entry(&s, &id).content, "寫完");
+    assert!(notice(&s, NoticeKind::SaveError).is_none());
+    assert!(!s.dirty);
+    assert_eq!(log_text(&s), "");
+}
