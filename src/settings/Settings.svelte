@@ -5,6 +5,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, onStateChanged, type SettingsView, type WidgetSettings } from "../lib/api";
+  import { LatestSaver } from "../lib/latest";
   import CatalogEditor from "./CatalogEditor.svelte";
 
   const isMac = navigator.userAgent.includes("Mac");
@@ -63,23 +64,15 @@
   }
 
   // The slider stays usable while a change is saved: keyboard steps that arrive meanwhile are
-  // coalesced into one save of the latest value.
-  let pendingOpacity: number | null = null;
-  let sendingOpacity = false;
-  async function setOpacity(value: number) {
-    pendingOpacity = value;
-    if (sendingOpacity) return;
-    sendingOpacity = true;
-    try {
-      while (pendingOpacity !== null) {
-        const next = pendingOpacity;
-        pendingOpacity = null;
-        await setWidget({ opacity: next });
-      }
-    } finally {
-      sendingOpacity = false;
-      dragOpacity = null;
-    }
+  // coalesced into one save of the latest value, and the shown value only snaps back to the
+  // stored one when no newer input is waiting.
+  const opacitySaver = new LatestSaver<number>(
+    (opacity) => setWidget({ opacity }),
+    () => (dragOpacity = null),
+  );
+  function dragTo(value: number) {
+    opacitySaver.input();
+    dragOpacity = value;
   }
 
   async function openFolder() {
@@ -147,8 +140,8 @@
           max="1"
           step="0.05"
           value={dragOpacity ?? view.widget.opacity}
-          oninput={(e) => (dragOpacity = Number(e.currentTarget.value))}
-          onchange={(e) => void setOpacity(Number(e.currentTarget.value))}
+          oninput={(e) => dragTo(Number(e.currentTarget.value))}
+          onchange={(e) => void opacitySaver.change(Number(e.currentTarget.value))}
         />
         <span class="pct">{Math.round((dragOpacity ?? view.widget.opacity) * 100)}%</span>
       </label>
