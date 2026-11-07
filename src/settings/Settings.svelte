@@ -111,7 +111,10 @@
           type="checkbox"
           checked={view.autostartEnabled}
           disabled={busy}
-          onchange={(e) => run(() => api.setAutostart(e.currentTarget.checked))}
+          onchange={(e) => {
+            const on = e.currentTarget.checked;
+            void run(() => api.setAutostart(on));
+          }}
         />
         登入電腦時自動開啟
       </label>
@@ -163,7 +166,10 @@
           type="checkbox"
           checked={view.hourlyReminder}
           disabled={busy}
-          onchange={(e) => run(() => api.setHourlyReminder(e.currentTarget.checked))}
+          onchange={(e) => {
+            const on = e.currentTarget.checked;
+            void run(() => api.setHourlyReminder(on));
+          }}
         />
         計時中每到整點通知一次
       </label>
