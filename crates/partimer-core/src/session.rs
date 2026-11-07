@@ -18,7 +18,8 @@ use crate::zone::{LocalZone, format_hhmm, format_local_input, local_date, parse_
 
 const LONG_RUNNING_SECS: i64 = 12 * 3600;
 const WEEKDAYS: [&str; 7] = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"];
-const EDITED_ELSEWHERE: &str = "這筆已在紀錄視窗被修改，面板上的文字尚未儲存";
+const EDITED_ELSEWHERE: &str =
+    "這筆已在紀錄視窗被修改，面板上的文字尚未儲存（按儲存才會寫入，結束 app 時不會自動存入）";
 const ENDED_ELSEWHERE: &str = "這筆已在紀錄視窗結束，面板上未儲存的文字沒有寫入";
 const REPAIRED_RUNNING: &str =
     "發現多筆同時在計時的紀錄，已保留最新的一筆，其餘已在下一筆開始時結束，請到紀錄視窗確認。";
@@ -84,6 +85,11 @@ pub struct Session<F: Fs> {
     zone: Box<dyn LocalZone>,
     data: Data,
     draft: Draft,
+    /// The running entry was edited in the records window while the draft had unsaved text.
+    /// Outlives the notice (dismissing it decides nothing); cleared only by the user's own
+    /// resolution: saving, a new draft (stop/start/switch/reset), or typing back to the
+    /// stored text. While set, quitting never auto-saves the draft (spec §5.4).
+    draft_conflict: bool,
     /// Changes that are not on disk yet.
     dirty: bool,
     /// `data.json` could not be read or is from a newer version: never write it this run.
@@ -109,6 +115,7 @@ impl<F: Fs> Session<F> {
             zone,
             data: loaded.data,
             draft: Draft::default(),
+            draft_conflict: false,
             dirty: false,
             save_blocked: loaded.save_blocked,
             last_backup_date: None,
@@ -176,6 +183,9 @@ impl<F: Fs> Session<F> {
         }
         self.draft.title = title;
         self.draft.content = content;
+        if self.draft_conflict && self.draft_saved() {
+            self.clear_draft_conflict();
+        }
     }
 
     pub fn start(
@@ -211,8 +221,7 @@ impl<F: Fs> Session<F> {
         let id = e.id.clone();
         self.draft.title = title.to_string();
         self.draft.content = content.to_string();
-        self.notices
-            .retain(|n| n.kind != NoticeKind::EditedElsewhere);
+        self.clear_draft_conflict();
         self.log_entry(now, Action::Save, &id);
         self.persist(now);
         Ok(())
@@ -668,14 +677,10 @@ impl<F: Fs> Session<F> {
     }
 
     /// On quit: save an unsaved draft into the running entry, then try one last save.
-    /// Not while the "edited in the records window" notice is up: the user has not decided
-    /// yet, and saving would silently overwrite the records-window edit (spec §5.4).
+    /// Not while the draft conflicts with a records-window edit, even if its notice was
+    /// dismissed: only 儲存 decides, and saving here would silently overwrite that edit.
     pub fn flush_on_exit(&mut self, now: DateTime<Utc>) {
-        let undecided = self
-            .notices
-            .iter()
-            .any(|n| n.kind == NoticeKind::EditedElsewhere);
-        if !self.draft_saved() && !undecided {
+        if !self.draft_saved() && !self.draft_conflict {
             let (title, content) = (self.draft.title.clone(), self.draft.content.clone());
             let _ = self.save_draft(&title, &content, now);
         }
@@ -808,12 +813,23 @@ impl<F: Fs> Session<F> {
             .is_none_or(|e| e.title == self.draft.title && e.content == self.draft.content)
     }
 
+    /// A new draft replaces any conflicting text (stop/start/switch/reset), which ends the
+    /// conflict and its notice.
     fn replace_draft(&mut self, title: String, content: String) {
         self.draft = Draft {
             title,
             content,
             generation: self.draft.generation + 1,
         };
+        if self.draft_conflict {
+            self.clear_draft_conflict();
+        }
+    }
+
+    fn clear_draft_conflict(&mut self) {
+        self.draft_conflict = false;
+        self.notices
+            .retain(|n| n.kind != NoticeKind::EditedElsewhere);
     }
 
     /// The fields now belong to the next entry: selected project's last title, empty content.
@@ -848,15 +864,22 @@ impl<F: Fs> Session<F> {
         let clean = self.draft.title == before.title && self.draft.content == before.content;
         let still_running = self.running().filter(|e| e.id == before.id).cloned();
         match still_running {
-            Some(_) if !clean => {
-                self.upsert_notice(NoticeKind::EditedElsewhere, EDITED_ELSEWHERE.to_string());
+            Some(e) if !clean => {
+                if self.draft.title == e.title && self.draft.content == e.content {
+                    // The records window saved exactly the panel's text: nothing to decide.
+                    self.clear_draft_conflict();
+                } else {
+                    self.draft_conflict = true;
+                    self.upsert_notice(NoticeKind::EditedElsewhere, EDITED_ELSEWHERE.to_string());
+                }
             }
             Some(e) => {
-                self.notices
-                    .retain(|n| n.kind != NoticeKind::EditedElsewhere);
+                self.clear_draft_conflict();
                 self.replace_draft(e.title, e.content);
             }
             None => {
+                // Superseded by the "ended elsewhere" notice below (same kind).
+                self.draft_conflict = false;
                 if let Some(e) = self.data.entries.iter().find(|e| e.id == before.id) {
                     self.data.settings.last_project_id = Some(e.project_id.clone());
                 }

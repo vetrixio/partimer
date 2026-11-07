@@ -843,7 +843,10 @@ fn editing_running_entry_keeps_dirty_draft_and_notifies() {
     assert_eq!(p.draft.generation, generation);
     assert!(!p.draft_saved);
     let n = notice(&s, NoticeKind::EditedElsewhere).expect("notice");
-    assert_eq!(n.message, "這筆已在紀錄視窗被修改，面板上的文字尚未儲存");
+    assert_eq!(
+        n.message,
+        "這筆已在紀錄視窗被修改，面板上的文字尚未儲存（按儲存才會寫入，結束 app 時不會自動存入）"
+    );
     assert!(n.dismissable);
     s.dismiss_notice(n.id);
     assert!(notice(&s, NoticeKind::EditedElsewhere).is_none());
@@ -1263,4 +1266,71 @@ fn single_running_entry_is_not_repaired() {
     let s = open(seed(&d), at(60));
     assert!(notice(&s, NoticeKind::Info).is_none());
     assert_eq!(count_action(&s, "EDIT"), 0);
+}
+
+/// Running entry edited in the records window while the panel draft is dirty.
+fn conflicted_session() -> (Session<MemFs>, String) {
+    let mut s = open(seeded(), at(0));
+    s.start("p1", "A", "B", at(0)).unwrap();
+    let id = running_id(&s, at(1));
+    s.set_draft("A".into(), "打字中".into(), s.draft.generation);
+    let mut f = s.entry_form(&id).unwrap();
+    f.title = "A2".into();
+    f.content = "紀錄視窗的內容".into();
+    s.save_entry(Some(&id), f, at(60)).unwrap();
+    (s, id)
+}
+
+#[test]
+fn flush_on_exit_after_dismissing_conflict_keeps_records_edit() {
+    let (mut s, id) = conflicted_session();
+    let n = notice(&s, NoticeKind::EditedElsewhere).expect("notice");
+    assert_eq!(
+        n.message,
+        "這筆已在紀錄視窗被修改，面板上的文字尚未儲存（按儲存才會寫入，結束 app 時不會自動存入）"
+    );
+    s.dismiss_notice(n.id);
+    assert!(notice(&s, NoticeKind::EditedElsewhere).is_none());
+    s.flush_on_exit(at(120));
+    let e = disk_entry(&s, &id);
+    assert_eq!(
+        (e.title.as_str(), e.content.as_str()),
+        ("A2", "紀錄視窗的內容")
+    );
+    assert_eq!(count_action(&s, "SAVE"), 0);
+}
+
+#[test]
+fn save_after_conflict_clears_it_so_exit_saves_again() {
+    let (mut s, id) = conflicted_session();
+    s.save_draft("A", "打字中", at(61)).unwrap();
+    let g = s.draft.generation;
+    s.set_draft("A".into(), "再改一次".into(), g);
+    s.flush_on_exit(at(120));
+    assert_eq!(disk_entry(&s, &id).content, "再改一次");
+}
+
+#[test]
+fn typing_back_to_stored_text_clears_conflict() {
+    let (mut s, id) = conflicted_session();
+    let g = s.draft.generation;
+    s.set_draft("A2".into(), "紀錄視窗的內容".into(), g);
+    assert!(s.panel_state(at(61)).draft_saved);
+    assert!(notice(&s, NoticeKind::EditedElsewhere).is_none());
+    s.set_draft("A2".into(), "接著打".into(), g);
+    s.flush_on_exit(at(120));
+    assert_eq!(disk_entry(&s, &id).content, "接著打");
+}
+
+#[test]
+fn stop_after_conflict_clears_it() {
+    let (mut s, _) = conflicted_session();
+    s.stop("A", "打字中", at(90)).unwrap();
+    assert!(notice(&s, NoticeKind::EditedElsewhere).is_none());
+    s.start("p1", "N", "", at(100)).unwrap();
+    let id = running_id(&s, at(101));
+    let g = s.draft.generation;
+    s.set_draft("N".into(), "新的".into(), g);
+    s.flush_on_exit(at(120));
+    assert_eq!(disk_entry(&s, &id).content, "新的");
 }

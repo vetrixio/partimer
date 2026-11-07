@@ -296,7 +296,11 @@ Set-up: a few entries this month and last month across two clients, one entry th
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
-- **R17** While timing, type unsaved text in the panel, then edit the same entry's 內容 in the records window and 儲存: the panel shows 「這筆已在紀錄視窗被修改，面板上的文字尚未儲存」. Quit from the tray menu without pressing 儲存 and start again: the entry has the records-window text, not the panel text.
+- **R17** While timing, type unsaved text in the panel, then edit the same entry's 內容 in the records window and 儲存: the panel shows 「這筆已在紀錄視窗被修改，面板上的文字尚未儲存（按儲存才會寫入，結束 app 時不會自動存入）」. Quit from the tray menu without pressing 儲存 and start again: the entry has the records-window text, not the panel text.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **R18** Same as R17, but close the notice with its × first, then quit from the tray menu without pressing 儲存: after starting again the entry still has the records-window text. Repeat, but press 儲存 (or Ctrl+S) in the panel before quitting: the entry has the panel text.
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
