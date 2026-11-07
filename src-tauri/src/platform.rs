@@ -1,4 +1,59 @@
-//! Platform-specific defaults and help texts.
+//! Platform-specific defaults, help texts and process launching.
+
+use std::ffi::OsStr;
+use std::path::Path;
+use std::sync::OnceLock;
+
+/// Whether partimer itself set `GDK_BACKEND=x11` (see `prefer_x11_backend`).
+static GDK_BACKEND_SET_BY_US: OnceLock<bool> = OnceLock::new();
+
+/// Linux: Wayland forbids apps from keeping windows on top or placing them, so go through
+/// XWayland unless the user chose a backend. Remembers whether it did, so child processes
+/// (file manager…) are not pushed onto XWayland too.
+///
+/// # Safety
+/// Must run before any other thread exists (first statement of `main`): it sets an
+/// environment variable.
+pub unsafe fn prefer_x11_backend() {
+    let set = cfg!(target_os = "linux") && std::env::var_os("GDK_BACKEND").is_none();
+    if set {
+        // SAFETY: guaranteed single-threaded by the caller.
+        unsafe { std::env::set_var("GDK_BACKEND", "x11") };
+    }
+    let _ = GDK_BACKEND_SET_BY_US.set(set);
+}
+
+/// Child processes drop `GDK_BACKEND` only when partimer put it there and it still holds
+/// partimer's value; a backend the user chose is passed on untouched.
+fn should_strip_gdk_backend(set_by_us: bool, current: Option<&OsStr>) -> bool {
+    set_by_us && current == Some(OsStr::new("x11"))
+}
+
+/// Open a folder in the system file manager. On Linux `xdg-open` is spawned directly so the
+/// forced `GDK_BACKEND` can be removed from its environment; elsewhere the opener plugin.
+#[cfg(target_os = "linux")]
+pub fn open_folder(_app: &tauri::AppHandle, dir: &Path) -> Result<(), String> {
+    let mut cmd = std::process::Command::new("xdg-open");
+    cmd.arg(dir);
+    let set_by_us = GDK_BACKEND_SET_BY_US.get().copied().unwrap_or(false);
+    if should_strip_gdk_backend(set_by_us, std::env::var_os("GDK_BACKEND").as_deref()) {
+        cmd.env_remove("GDK_BACKEND");
+    }
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    // Reap it so no zombie is left behind; xdg-open returns once the file manager started.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn open_folder(app: &tauri::AppHandle, dir: &Path) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt as _;
+    app.opener()
+        .open_path(dir.display().to_string(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
 
 /// Manual steps shown in the settings window when the app cannot enable autostart itself.
 pub fn autostart_help() -> String {
@@ -53,6 +108,17 @@ mod tests {
     fn autostart_help_names_the_app_or_command() {
         let help = autostart_help();
         assert!(help.contains("打工人計時器") || help.contains("`partimer`"));
+    }
+
+    #[test]
+    fn gdk_backend_is_stripped_only_when_we_set_it() {
+        let x11 = Some(OsStr::new("x11"));
+        assert!(should_strip_gdk_backend(true, x11));
+        // The user's own choice (we did not set it) is passed on.
+        assert!(!should_strip_gdk_backend(false, x11));
+        // Changed since, or already gone: leave it alone.
+        assert!(!should_strip_gdk_backend(true, Some(OsStr::new("wayland"))));
+        assert!(!should_strip_gdk_backend(true, None));
     }
 
     #[test]

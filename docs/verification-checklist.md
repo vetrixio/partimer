@@ -103,6 +103,7 @@ Test on Ubuntu 24.04 or later in the default (Wayland) session, and the X11 item
 - [ ] **U14** Wayland session (Ubuntu default): the settings window shows the red text about Wayland and the custom-shortcut steps; a custom shortcut in 設定 → 鍵盤 → 檢視及自訂快捷鍵 → 自訂快捷鍵 running `partimer` opens the panel.
 - [ ] **U15** Hourly and 12-hour notifications appear in GNOME's notification list as 打工人計時器 with the texts 「已計時 N 小時・專案名」 / 「是不是忘了停？已計時 12 小時・專案名」, once each (rules: N1–N2 below). (Checked headless only: one D-Bus Notify call each, title 打工人計時器, bodies 「是不是忘了停？已計時 12 小時・官網改版」 and 「已計時 12 小時・官網改版」.)
 - [ ] **U19** Logging out, and separately shutting down, while timing with unsaved text typed in the panel: note whether the unsaved title/content survives (README warns it may be lost on Ubuntu, because the session's SIGTERM is not handled). Then quit from the tray menu (結束) with unsaved text and log out: the text is in the entry after logging in again.
+- [ ] **U20** Default (Wayland) session: 設定 →「打開資料夾」 opens `~/.local/share/partimer/` in Files as a normal Wayland window (Files looks and scales like when opened from the dock; `xprop` clicking it reports that the window is not an X window). Start partimer from a terminal with `GDK_BACKEND=x11 partimer` and repeat: the user's choice is passed on (Files may then run through XWayland).
 
 ### Floating clock (Ubuntu)
 

@@ -13,7 +13,6 @@ use std::sync::MutexGuard;
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_dialog::DialogExt as _;
-use tauri_plugin_opener::OpenerExt as _;
 
 use crate::windows::{self, Origin};
 use crate::{AppState, ShortcutStatus, platform};
@@ -443,9 +442,7 @@ pub fn set_hourly_reminder(
 pub fn open_data_folder(app: AppHandle, state: State<'_, AppState>) -> Res<()> {
     let dir = session(&state).data_dir().to_path_buf();
     std::fs::create_dir_all(&dir).map_err(|e| format!("無法建立資料夾：{e}"))?;
-    app.opener()
-        .open_path(dir.display().to_string(), None::<&str>)
-        .map_err(|e| format!("無法打開資料夾：{e}"))
+    platform::open_folder(&app, &dir).map_err(|e| format!("無法打開資料夾：{e}"))
 }
 
 // ---- windows ----
