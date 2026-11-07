@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.1 - 2026-11-07
+
+### 新增
+
+- Windows 免安裝版 `partimer_0.1.1_windows_x64_portable.zip`：解壓縮後直接執行 `partimer\partimer.exe`，不用安裝。資料（`data.json`、每日備份、活動紀錄）存在 exe 旁邊的 `partimer-data` 資料夾，可以整包帶到隨身碟或另一台電腦；刪掉或改名這個資料夾就改用安裝版的 `%APPDATA%\partimer`。資料夾無法寫入（例如放在 `C:\Program Files`）時，面板會提示。
+
 ## v0.1.0 - 2026-11-07
 
 第一個版本。支援 macOS（Apple Silicon 與 Intel）、Windows 10/11、Ubuntu 24.04 以上。

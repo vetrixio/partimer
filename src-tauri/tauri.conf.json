@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "打工人計時器",
   "mainBinaryName": "partimer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.vetrixio.partimer",
   "build": {
     "beforeDevCommand": "npm run dev",
