@@ -34,10 +34,18 @@ pub enum EditError {
     EndWhileRunning,
     #[error("開始時間不能晚於現在")]
     StartInFuture,
+    #[error("開始時間不能晚於暫停開始的時間")]
+    StartAfterPause,
     #[error("結束時間不能晚於現在")]
     EndInFuture,
-    #[error("已經有一筆正在計時")]
-    AnotherRunning,
+}
+
+fn check_project(data: &Data, project_id: &str) -> Result<(), EditError> {
+    if data.projects.iter().any(|p| p.id == project_id) {
+        Ok(())
+    } else {
+        Err(EditError::UnknownProject)
+    }
 }
 
 /// Checks `0 <= paused_minutes * 60 <= span` and returns the pause in seconds.
@@ -94,9 +102,7 @@ pub fn apply_edit(
         .iter()
         .position(|e| e.id == id)
         .ok_or(EditError::NotFound)?;
-    if !data.projects.iter().any(|p| p.id == patch.project_id) {
-        return Err(EditError::UnknownProject);
-    }
+    check_project(data, &patch.project_id)?;
     let was_running = data.entries[idx].end.is_none();
     if !was_running && patch.still_running {
         return Err(EditError::CannotReopen);
@@ -111,7 +117,11 @@ pub fn apply_edit(
         if patch.start > now {
             return Err(EditError::StartInFuture);
         }
-        let span_end = data.entries[idx].pause_started_at.unwrap_or(now);
+        let pause_start = data.entries[idx].pause_started_at;
+        if pause_start.is_some_and(|p| patch.start > p) {
+            return Err(EditError::StartAfterPause);
+        }
+        let span_end = pause_start.unwrap_or(now);
         (
             None,
             check_pause(patch.paused_minutes, patch.start, span_end)?,
@@ -139,9 +149,7 @@ pub fn add_entry(data: &mut Data, patch: EntryPatch, now: DateTime<Utc>) -> Resu
     if patch.still_running {
         return Err(EditError::EndRequired);
     }
-    if !data.projects.iter().any(|p| p.id == patch.project_id) {
-        return Err(EditError::UnknownProject);
-    }
+    check_project(data, &patch.project_id)?;
     let (end, paused_seconds) = check_finished(&patch, now)?;
     let id = new_id();
     data.entries.push(Entry {
@@ -329,10 +337,32 @@ mod tests {
     fn turning_off_while_paused_clears_pause_start() {
         let mut d = running_data();
         d.entries[0].pause_started_at = Some(utc("2026-11-06T11:00:00Z"));
-        let p = patch("2026-11-06T10:00:00Z", Some("2026-11-06T11:30:00Z"));
+        let mut p = patch("2026-11-06T10:00:00Z", Some("2026-11-06T11:30:00Z"));
+        p.paused_minutes = 15;
         apply_edit(&mut d, "r1", p, now()).unwrap();
-        assert_eq!(d.entries[0].pause_started_at, None);
-        assert!(d.entries[0].end.is_some());
+        let e = &d.entries[0];
+        assert_eq!(e.pause_started_at, None);
+        // The typed end wins over the pause start; the form's pause minutes are the total.
+        assert_eq!(e.end, Some(utc("2026-11-06T11:30:00Z")));
+        assert_eq!(e.paused_seconds, 900);
+    }
+
+    #[test]
+    fn paused_running_start_after_pause_start_is_named() {
+        let mut d = running_data();
+        d.entries[0].pause_started_at = Some(utc("2026-11-06T11:00:00Z"));
+        let before = d.clone();
+        let mut p = patch("2026-11-06T11:10:00Z", None);
+        p.still_running = true;
+        assert_eq!(
+            apply_edit(&mut d, "r1", p, now()),
+            Err(EditError::StartAfterPause)
+        );
+        assert_eq!(d, before);
+        assert_eq!(
+            EditError::StartAfterPause.to_string(),
+            "開始時間不能晚於暫停開始的時間"
+        );
     }
 
     #[test]
@@ -582,6 +612,5 @@ mod tests {
             EditError::EndNotAfterStart.to_string(),
             "結束時間必須晚於開始時間"
         );
-        assert_eq!(EditError::AnotherRunning.to_string(), "已經有一筆正在計時");
     }
 }
