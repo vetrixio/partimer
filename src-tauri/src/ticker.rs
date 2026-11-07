@@ -2,11 +2,13 @@
 //! The same thread also steps the tray's awake animation every 500 ms, so the icon is only
 //! ever changed from one thread.
 
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use chrono::Utc;
-use partimer_core::{Notice, Reminder, TimerStatus};
+use chrono::{DateTime, Utc};
+use partimer_core::{Notice, RealFs, Reminder, Session, TimerStatus};
 use tauri::plugin::PermissionState;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::NotificationExt;
@@ -19,6 +21,48 @@ const FRAMES_PER_TICK: u64 = 2;
 /// A floating clock that should be on screen but is missing (e.g. its build failed) is
 /// asked for again at most this often.
 const WIDGET_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Set when the app is exiting: the loop stops instead of ticking through shutdown.
+static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+/// What the last `state-changed` reflected, whether the ticker or a command sent it, so the
+/// tick right after a command does not broadcast the same change again.
+static LAST_EMITTED: Mutex<Option<Snapshot>> = Mutex::new(None);
+
+/// Stop the loop (called on exit, before the final flush).
+pub fn stop() {
+    SHUTDOWN.store(true, Ordering::SeqCst);
+}
+
+/// Remember the state a command is about to broadcast. Call without holding the session.
+pub fn note_broadcast(app: &AppHandle) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let snapshot = snapshot_of(&lock(&state.session), Utc::now());
+    *lock(&LAST_EMITTED) = Some(snapshot);
+}
+
+fn snapshot_of(session: &Session<RealFs>, now: DateTime<Utc>) -> Snapshot {
+    let (status, elapsed) = session.timer_status(now);
+    Snapshot {
+        status,
+        minute: elapsed / 60,
+        notices: session.notices().to_vec(),
+    }
+}
+
+/// The next frame's deadline and how long to sleep for it. Deadlines are absolute, so the
+/// time spent ticking does not add up into drift; after a long stall (sleep, suspend) the
+/// schedule restarts from now instead of firing a burst of catch-up frames.
+fn next_deadline(prev: Instant, now: Instant, interval: Duration) -> (Instant, Duration) {
+    let target = prev + interval;
+    if target > now {
+        (target, target - now)
+    } else {
+        (now, Duration::ZERO)
+    }
+}
 
 /// What the open windows show that changes with time alone. Broadcasting only when it
 /// changes keeps the records window from re-rendering every second.
@@ -67,7 +111,11 @@ pub fn spawn(app: &AppHandle) {
         .spawn(move || {
             let mut last: Option<Snapshot> = None;
             let mut widget_asked: Option<Instant> = None;
+            let mut deadline = Instant::now();
             for frame in (0..FRAMES_PER_TICK).cycle() {
+                if SHUTDOWN.load(Ordering::SeqCst) {
+                    break;
+                }
                 // Animate before ticking: a timer that just started shows frame 0 first.
                 tray::advance_frame(&app);
                 if frame == 0
@@ -75,7 +123,9 @@ pub fn spawn(app: &AppHandle) {
                 {
                     last = Some(snapshot);
                 }
-                thread::sleep(FRAME_INTERVAL);
+                let (next, wait) = next_deadline(deadline, Instant::now(), FRAME_INTERVAL);
+                deadline = next;
+                thread::sleep(wait);
             }
         });
     if let Err(e) = started {
@@ -122,8 +172,11 @@ fn tick(
         *widget_asked = Some(instant);
         windows::ensure_widget(app);
     }
-    if should_emit(last, &snapshot, !reminders.is_empty()) {
-        commands::changed(app);
+    let mut emitted = lock(&LAST_EMITTED);
+    if should_emit(emitted.as_ref(), &snapshot, !reminders.is_empty()) {
+        *emitted = Some(snapshot.clone());
+        drop(emitted);
+        commands::emit_state_changed(app);
     }
     Some(snapshot)
 }
@@ -190,6 +243,26 @@ mod tests {
         assert!(widget_retry_due(true, false, Some(t0), after(5)));
         assert!(!widget_retry_due(true, true, Some(t0), after(60)), "exists");
         assert!(!widget_retry_due(false, false, None, t0), "not wanted");
+    }
+
+    #[test]
+    fn deadlines_are_absolute_and_restart_after_a_stall() {
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        // The tick took 120 ms: sleep only the rest of the 500 ms frame.
+        assert_eq!(
+            next_deadline(t0, t0 + ms(120), ms(500)),
+            (t0 + ms(500), ms(380))
+        );
+        // Late by 100 ms (e.g. after a slow tick): run now, no extra wait.
+        assert_eq!(
+            next_deadline(t0, t0 + ms(600), ms(500)),
+            (t0 + ms(600), ms(0))
+        );
+        // Several deadlines in a row keep the 500 ms grid.
+        let (d1, _) = next_deadline(t0, t0 + ms(10), ms(500));
+        let (d2, w2) = next_deadline(d1, t0 + ms(530), ms(500));
+        assert_eq!((d2, w2), (t0 + ms(1000), ms(470)));
     }
 
     #[test]

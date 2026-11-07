@@ -54,11 +54,45 @@ struct TrayState {
 }
 
 /// What the tray currently shows, so unchanged values are not pushed again every second.
+#[derive(Debug)]
 struct Shown {
     running: bool,
     frame: usize,
     title: Option<String>,
     tooltip: String,
+}
+
+/// What `Shown::apply` says must be pushed to the tray; `None` = unchanged.
+#[derive(Debug, PartialEq)]
+struct Changes {
+    /// `Some(true)`: first awake frame, `Some(false)`: resting icon.
+    icon_running: Option<bool>,
+    title: Option<Option<String>>,
+    tooltip: Option<String>,
+}
+
+impl Shown {
+    /// Record the new state and return only what differs from what is shown.
+    fn apply(&mut self, running: bool, title: Option<String>, tooltip: String) -> Changes {
+        let icon_running = (running != self.running).then(|| {
+            self.running = running;
+            self.frame = 0;
+            running
+        });
+        let title = (title != self.title).then(|| {
+            self.title = title.clone();
+            title
+        });
+        let tooltip = (tooltip != self.tooltip).then(|| {
+            self.tooltip = tooltip.clone();
+            tooltip
+        });
+        Changes {
+            icon_running,
+            title,
+            tooltip,
+        }
+    }
 }
 
 /// `1:23`: whole hours (not wrapped at 24) and zero-padded minutes, negatives as 0.
@@ -150,7 +184,9 @@ fn on_tray_event(tray: &TrayIcon, event: TrayIconEvent) {
             rect,
             button == MouseButton::Left && button_state == MouseButtonState::Up,
         ),
-        TrayIconEvent::Enter { rect, .. } | TrayIconEvent::Move { rect, .. } => (rect, false),
+        // The icon's rectangle does not change while the pointer moves over it, so `Move`
+        // (sent on every mouse move) is ignored; `Enter` and clicks keep it current.
+        TrayIconEvent::Enter { rect, .. } => (rect, false),
         _ => return,
     };
     let rect = physical_rect(rect);
@@ -191,34 +227,19 @@ pub fn update(
     let tooltip = tooltip_text(status, elapsed_seconds, project_name);
 
     // Decide under the lock, call the tray API after releasing it.
-    let (icon, title, tooltip) = {
-        let mut shown = lock(&state.shown);
-        let icon = (running != shown.running).then(|| {
-            shown.running = running;
-            shown.frame = 0;
-            if running {
-                &state.awake[0]
-            } else {
-                &state.rest
-            }
-        });
-        let title = (title != shown.title).then(|| {
-            shown.title = title.clone();
-            title
-        });
-        let tooltip = (tooltip != shown.tooltip).then(|| {
-            shown.tooltip = tooltip.clone();
-            tooltip
-        });
-        (icon, title, tooltip)
-    };
-    if let Some(icon) = icon {
+    let changes = lock(&state.shown).apply(running, title, tooltip);
+    if let Some(running) = changes.icon_running {
+        let icon = if running {
+            &state.awake[0]
+        } else {
+            &state.rest
+        };
         log(tray.set_icon(Some(icon.clone())));
     }
-    if let Some(title) = title {
+    if let Some(title) = changes.title {
         log(tray.set_title(title));
     }
-    if let Some(tooltip) = tooltip {
+    if let Some(tooltip) = changes.tooltip {
         log(tray.set_tooltip(Some(tooltip)));
     }
 }
@@ -289,6 +310,47 @@ mod tests {
             "暫停中 ⏸ 0:47・官網改版"
         );
         assert_eq!(tooltip_text(TimerStatus::Idle, 0, None), "打工人計時器");
+    }
+
+    #[test]
+    fn shown_cache_reports_only_changes() {
+        let mut shown = Shown {
+            running: false,
+            frame: 0,
+            title: None,
+            tooltip: APP_NAME.to_string(),
+        };
+        let none = Changes {
+            icon_running: None,
+            title: None,
+            tooltip: None,
+        };
+        assert_eq!(shown.apply(false, None, APP_NAME.into()), none);
+        let start = shown.apply(true, Some("  0:00".into()), "計時中 0:00".into());
+        assert_eq!(
+            start,
+            Changes {
+                icon_running: Some(true),
+                title: Some(Some("  0:00".into())),
+                tooltip: Some("計時中 0:00".into()),
+            }
+        );
+        // Same second again: nothing to push.
+        assert_eq!(
+            shown.apply(true, Some("  0:00".into()), "計時中 0:00".into()),
+            none
+        );
+        // A new minute: only the texts.
+        shown.frame = 3;
+        let minute = shown.apply(true, Some("  0:01".into()), "計時中 0:01".into());
+        assert_eq!(minute.icon_running, None);
+        assert_eq!(minute.title, Some(Some("  0:01".into())));
+        assert_eq!(shown.frame, 3, "animation frame kept while running");
+        // Stop: resting icon, title cleared, frame reset.
+        let stop = shown.apply(false, None, APP_NAME.into());
+        assert_eq!(stop.icon_running, Some(false));
+        assert_eq!(stop.title, Some(None));
+        assert_eq!(shown.frame, 0);
     }
 
     #[test]

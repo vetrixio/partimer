@@ -39,7 +39,13 @@ fn session<'a>(state: &'a State<'_, AppState>) -> MutexGuard<'a, Session<RealFs>
     crate::lock(&state.session)
 }
 
+/// Broadcast a change made by a command. Call without holding the session lock.
 pub(crate) fn changed(app: &AppHandle) {
+    crate::ticker::note_broadcast(app);
+    emit_state_changed(app);
+}
+
+pub(crate) fn emit_state_changed(app: &AppHandle) {
     if let Err(e) = app.emit(STATE_CHANGED, ()) {
         eprintln!("partimer: emit {STATE_CHANGED}: {e}");
     }

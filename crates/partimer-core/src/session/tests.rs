@@ -1452,3 +1452,17 @@ fn select_running_archived_project_is_a_noop() {
     s.select_project("p1", "A", "", at(2)).unwrap();
     assert_eq!(s.panel_state(at(3)).status, TimerStatus::Running);
 }
+
+#[test]
+fn timer_status_and_notices_match_panel_state() {
+    let mut s = open(seeded(), at(0));
+    assert_eq!(s.timer_status(at(0)), (TimerStatus::Idle, 0));
+    s.start("p1", "A", "", at(0)).unwrap();
+    s.pause(at(90)).unwrap();
+    let p = s.panel_state(at(200));
+    assert_eq!(s.timer_status(at(200)), (p.status, p.elapsed_seconds));
+    assert_eq!(s.timer_status(at(200)), (TimerStatus::Paused, 90));
+    s.push_notice(NoticeKind::Info, "x".into());
+    assert_eq!(s.notices(), s.panel_state(at(200)).notices.as_slice());
+    assert_eq!(s.notices().len(), 1);
+}

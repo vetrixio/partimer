@@ -194,6 +194,17 @@ impl<F: Fs> Session<F> {
         }
     }
 
+    /// Cheap status for callers that need no lists: status and elapsed seconds.
+    pub fn timer_status(&self, now: DateTime<Utc>) -> (TimerStatus, i64) {
+        self.running().map_or((TimerStatus::Idle, 0), |e| {
+            (status_of(e), effective_seconds(e, now))
+        })
+    }
+
+    pub fn notices(&self) -> &[Notice] {
+        &self.notices
+    }
+
     /// Memory only: never writes the file and keeps the generation. `generation` is the one
     /// the caller's fields were built from; a sync from fields that were since replaced (e.g.
     /// arriving after STOP) is ignored, so old text never becomes the next entry's draft.

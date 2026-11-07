@@ -174,11 +174,15 @@ pub fn run() {
                 api.prevent_exit();
                 return;
             }
+            ticker::stop();
             flush(app);
         }
         // An OS-initiated quit (e.g. macOS logout) ends the loop without ExitRequested.
         // After an ExitRequested flush this second one finds nothing left to save.
-        RunEvent::Exit => flush(app),
+        RunEvent::Exit => {
+            ticker::stop();
+            flush(app);
+        }
         // macOS does not start a second process when a running app is opened again; it
         // sends "reopen" to the running one instead.
         #[cfg(target_os = "macos")]
