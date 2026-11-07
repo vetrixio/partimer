@@ -1,5 +1,6 @@
 //! Platform-specific defaults, help texts and process launching.
 
+#[cfg(any(target_os = "linux", test))]
 use std::ffi::OsStr;
 use std::path::Path;
 use std::sync::OnceLock;
@@ -25,6 +26,7 @@ pub unsafe fn prefer_x11_backend() {
 
 /// Child processes drop `GDK_BACKEND` only when partimer put it there and it still holds
 /// partimer's value; a backend the user chose is passed on untouched.
+#[cfg(any(target_os = "linux", test))]
 fn should_strip_gdk_backend(set_by_us: bool, current: Option<&OsStr>) -> bool {
     set_by_us && current == Some(OsStr::new("x11"))
 }
