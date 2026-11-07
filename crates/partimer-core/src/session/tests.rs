@@ -1334,3 +1334,17 @@ fn stop_after_conflict_clears_it() {
     s.flush_on_exit(at(120));
     assert_eq!(disk_entry(&s, &id).content, "新的");
 }
+
+#[test]
+fn save_entry_rejects_future_end_from_form() {
+    // now = 09:00:30 local; the typed minute 09:01 is within the 60 s tolerance.
+    let now = at(30);
+    let mut s = open(seeded(), now);
+    let mut form = s.new_entry_form(now);
+    form.end_local = Some("2026-10-06T10:00".into());
+    let err = s.save_entry(None, form.clone(), now).unwrap_err();
+    assert_eq!(err, "結束時間不能晚於現在");
+    form.end_local = Some("2026-10-06T09:01".into());
+    s.save_entry(None, form, now).unwrap();
+    assert_eq!(on_disk(&s).entries.len(), 3);
+}

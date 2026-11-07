@@ -304,6 +304,10 @@ Set-up: a few entries this month and last month across two clients, one entry th
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
+- **R19** 新增紀錄 with 結束 one hour later than now: 儲存 shows 「結束時間不能晚於現在」 and nothing is added; with 開始 in the future: 「開始時間不能晚於現在」. Editing an existing entry's 結束 to a future time shows the same message. The default form (last hour, ending now) saves fine.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
 
 ## Common: settings window (each item on macOS, Windows and Ubuntu)
 

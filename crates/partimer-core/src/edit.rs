@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 
 use crate::model::{Data, Entry, Id, new_id};
 
@@ -34,6 +34,8 @@ pub enum EditError {
     EndWhileRunning,
     #[error("開始時間不能晚於現在")]
     StartInFuture,
+    #[error("結束時間不能晚於現在")]
+    EndInFuture,
     #[error("已經有一筆正在計時")]
     AnotherRunning,
 }
@@ -56,9 +58,23 @@ fn check_pause(
     Ok(paused)
 }
 
+/// How far past `now` a finished entry's start or end may be: absorbs clock skew between
+/// the form and the save, and typing the current minute.
+const FUTURE_TOLERANCE_SECS: i64 = 60;
+
 /// Validates a patch that finishes an entry; returns (end, paused_seconds).
-fn check_finished(patch: &EntryPatch) -> Result<(DateTime<Utc>, i64), EditError> {
+fn check_finished(
+    patch: &EntryPatch,
+    now: DateTime<Utc>,
+) -> Result<(DateTime<Utc>, i64), EditError> {
     let end = patch.end.ok_or(EditError::EndRequired)?;
+    let latest = now + Duration::seconds(FUTURE_TOLERANCE_SECS);
+    if patch.start > latest {
+        return Err(EditError::StartInFuture);
+    }
+    if end > latest {
+        return Err(EditError::EndInFuture);
+    }
     if end <= patch.start {
         return Err(EditError::EndNotAfterStart);
     }
@@ -91,6 +107,7 @@ pub fn apply_edit(
         if patch.end.is_some() {
             return Err(EditError::EndWhileRunning);
         }
+        // No tolerance here: a running entry starting after `now` would have no span yet.
         if patch.start > now {
             return Err(EditError::StartInFuture);
         }
@@ -100,7 +117,7 @@ pub fn apply_edit(
             check_pause(patch.paused_minutes, patch.start, span_end)?,
         )
     } else {
-        let (end, paused) = check_finished(&patch)?;
+        let (end, paused) = check_finished(&patch, now)?;
         (Some(end), paused)
     };
 
@@ -118,14 +135,14 @@ pub fn apply_edit(
 }
 
 /// Adds a finished entry by hand; never creates a running entry.
-pub fn add_entry(data: &mut Data, patch: EntryPatch, _now: DateTime<Utc>) -> Result<Id, EditError> {
+pub fn add_entry(data: &mut Data, patch: EntryPatch, now: DateTime<Utc>) -> Result<Id, EditError> {
     if patch.still_running {
         return Err(EditError::EndRequired);
     }
     if !data.projects.iter().any(|p| p.id == patch.project_id) {
         return Err(EditError::UnknownProject);
     }
-    let (end, paused_seconds) = check_finished(&patch)?;
+    let (end, paused_seconds) = check_finished(&patch, now)?;
     let id = new_id();
     data.entries.push(Entry {
         id: id.clone(),
@@ -488,6 +505,62 @@ mod tests {
         let p = patch("2026-11-06T10:30:00Z", Some("2026-11-06T11:00:00Z"));
         add_entry(&mut d, p, now()).unwrap();
         assert_eq!(d.entries.iter().filter(|e| e.end.is_none()).count(), 1);
+    }
+
+    #[test]
+    fn add_entry_rejects_times_in_future() {
+        let mut d = data();
+        // now = 12:00:00; up to 60 s ahead is tolerated (clock skew, typed current minute).
+        let p = patch("2026-11-06T11:00:00Z", Some("2026-11-06T12:01:00Z"));
+        add_entry(&mut d, p, now()).unwrap();
+        let p = patch("2026-11-06T11:00:00Z", Some("2026-11-06T12:01:01Z"));
+        assert_eq!(add_entry(&mut d, p, now()), Err(EditError::EndInFuture));
+        let p = patch("2026-11-06T12:01:00Z", Some("2026-11-06T12:01:00Z"));
+        assert_eq!(
+            add_entry(&mut d, p, now()),
+            Err(EditError::EndNotAfterStart)
+        );
+        let p = patch("2026-11-06T12:01:01Z", Some("2026-11-06T13:00:00Z"));
+        assert_eq!(add_entry(&mut d, p, now()), Err(EditError::StartInFuture));
+        assert_eq!(d.entries.len(), 1);
+    }
+
+    #[test]
+    fn edit_rejects_times_in_future() {
+        let mut d = finished_data();
+        let before = d.clone();
+        let p = patch("2026-11-06T01:00:00Z", Some("2026-11-06T12:01:01Z"));
+        assert_eq!(
+            apply_edit(&mut d, "e1", p, now()),
+            Err(EditError::EndInFuture)
+        );
+        let p = patch("2026-11-06T12:01:01Z", Some("2026-11-06T14:00:00Z"));
+        assert_eq!(
+            apply_edit(&mut d, "e1", p, now()),
+            Err(EditError::StartInFuture)
+        );
+        assert_eq!(d, before);
+        let p = patch("2026-11-06T01:00:00Z", Some("2026-11-06T12:01:00Z"));
+        apply_edit(&mut d, "e1", p, now()).unwrap();
+        assert_eq!(d.entries[0].end, Some(utc("2026-11-06T12:01:00Z")));
+    }
+
+    #[test]
+    fn finishing_running_entry_rejects_end_in_future() {
+        let mut d = running_data();
+        let before = d.clone();
+        let p = patch("2026-11-06T10:00:00Z", Some("2026-11-06T12:01:01Z"));
+        assert_eq!(
+            apply_edit(&mut d, "r1", p, now()),
+            Err(EditError::EndInFuture)
+        );
+        assert_eq!(d, before);
+    }
+
+    #[test]
+    fn future_time_messages_name_the_field() {
+        assert_eq!(EditError::StartInFuture.to_string(), "開始時間不能晚於現在");
+        assert_eq!(EditError::EndInFuture.to_string(), "結束時間不能晚於現在");
     }
 
     #[test]
