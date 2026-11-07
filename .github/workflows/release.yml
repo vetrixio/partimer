@@ -131,3 +131,24 @@ jobs:
           releaseAssetNamePattern: partimer_[version]_[platform]_[arch][setup][ext]
           uploadUpdaterJson: false
           args: ${{ matrix.args }}
+      # Portable build: the same partimer.exe the installer ships, zipped with the
+      # partimer-data folder (holding only a README); that folder beside the exe makes the app keep
+      # its data there.
+      - name: Upload the Windows portable zip
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(jq -r .version src-tauri/tauri.conf.json)"
+          name="partimer_${version}_windows_x64_portable.zip"
+          exe="target/release/partimer.exe"
+          test -f "$exe" || { echo "::error::$exe not found"; exit 1; }
+          rm -rf portable && mkdir -p portable/partimer
+          cp "$exe" portable/partimer/
+          cp -r packaging/windows-portable/partimer-data portable/partimer/
+          (cd portable && 7z a -tzip "../$name" partimer >/dev/null)
+          7z l "$name"
+          gh release upload "$TAG" "$name" --clobber

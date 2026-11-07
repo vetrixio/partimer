@@ -4,7 +4,8 @@
 //! window from the main thread (sync commands, tray/menu handlers, plugin callbacks) deadlocks.
 //! So every caller can use them without thinking about which thread it is on.
 
-use std::sync::Mutex;
+use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 use chrono::Utc;
 use tauri::{
@@ -37,6 +38,26 @@ const WIDGET_MARGIN_TOP: f64 = 64.0;
 /// same label twice. Taken before the session lock, never the other way round, and never on
 /// the main thread.
 static WINDOW_OPS: Mutex<()> = Mutex::new(());
+
+/// WebView2 data folder of the Windows portable build; unset means the system default.
+static WEBVIEW_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Keep the webviews' own files (cache, storage) in `dir`. Call before any window is built:
+/// every webview in the process must use the same folder.
+pub fn set_webview_dir(dir: PathBuf) {
+    let _ = WEBVIEW_DIR.set(dir);
+}
+
+fn new_window<'a>(
+    app: &'a AppHandle,
+    label: &str,
+) -> WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
+    let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()));
+    match WEBVIEW_DIR.get() {
+        Some(dir) => builder.data_directory(dir.clone()),
+        None => builder,
+    }
+}
 
 /// Where the panel was asked to open from; decides where it is placed.
 #[derive(Debug, Clone, Copy)]
@@ -85,7 +106,7 @@ pub fn open_records(app: &AppHandle, entry_id: Option<String>) {
             }
             return Ok(());
         }
-        WebviewWindowBuilder::new(app, RECORDS, WebviewUrl::App("index.html".into()))
+        new_window(app, RECORDS)
             .title("紀錄 — 打工人計時器")
             .inner_size(900.0, 640.0)
             .build()?;
@@ -98,7 +119,7 @@ pub fn open_settings(app: &AppHandle) {
         if let Some(w) = app.get_webview_window(SETTINGS) {
             return focus(&w);
         }
-        WebviewWindowBuilder::new(app, SETTINGS, WebviewUrl::App("index.html".into()))
+        new_window(app, SETTINGS)
             .title("設定 — 打工人計時器")
             .inner_size(560.0, 640.0)
             .build()?;
@@ -157,7 +178,7 @@ fn build_widget(app: &AppHandle, saved: Option<PhysicalPosition<i32>>) -> tauri:
         .map(Screen::of)
         .collect::<Vec<_>>();
     let primary = app.primary_monitor()?.as_ref().map(Screen::of);
-    let mut builder = WebviewWindowBuilder::new(app, WIDGET, WebviewUrl::App("index.html".into()))
+    let mut builder = new_window(app, WIDGET)
         .title("打工人計時器")
         .inner_size(WIDGET_WIDTH, WIDGET_HEIGHT)
         // GTK makes a non-resizable window at least as big as the webview's natural size
@@ -285,7 +306,7 @@ fn focus(w: &WebviewWindow) -> tauri::Result<()> {
 fn show_panel_now(app: &AppHandle, origin: Origin) -> tauri::Result<()> {
     let w = match app.get_webview_window(PANEL) {
         Some(w) => w,
-        None => WebviewWindowBuilder::new(app, PANEL, WebviewUrl::App("index.html".into()))
+        None => new_window(app, PANEL)
             .title("打工人計時器")
             .inner_size(PANEL_WIDTH, PANEL_HEIGHT)
             .decorations(false)

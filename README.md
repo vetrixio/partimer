@@ -11,6 +11,7 @@
 |---|---|---|
 | macOS | `partimer_<版本>_darwin_universal.dmg` | 打開 `.dmg`，把「打工人計時器」拖進「應用程式」資料夾。 |
 | Windows | `partimer_<版本>_windows_x64-setup.exe` | 執行安裝程式，照畫面按「下一步」。 |
+| Windows（免安裝） | `partimer_<版本>_windows_x64_portable.zip` | 解壓縮到桌面、文件或隨身碟，執行 `partimer\partimer.exe`。資料存在旁邊的 `partimer-data` 資料夾（見下面「資料放在哪裡」）。 |
 | Ubuntu | `partimer_<版本>_linux_amd64.deb` | `sudo apt install ./partimer_<版本>_linux_amd64.deb` |
 | Ubuntu（免安裝） | `partimer_<版本>_linux_amd64.AppImage` | `chmod +x partimer_*.AppImage` 後直接執行。 |
 
@@ -45,6 +46,7 @@ xattr -dr com.apple.quarantine "/Applications/打工人計時器.app"
 
 - **macOS**：結束 app（選單列圖示按右鍵 →「結束」），把「應用程式」裡的「打工人計時器」丟到垃圾桶。
 - **Windows**：「設定 → 應用程式 → 已安裝的應用程式」找到「打工人計時器」→「解除安裝」。
+- **Windows 免安裝版**：結束 app 後刪掉整個 `partimer` 資料夾（**資料也在裡面**，要保留請先把 `partimer-data` 複製出來）。
 - **Ubuntu**：`sudo apt remove partimer`；AppImage 直接刪掉檔案即可。
 
 解除安裝**不會刪除你的資料**。要連資料一起刪，請再手動刪掉下面「資料放在哪裡」的資料夾。
@@ -95,6 +97,13 @@ xattr -dr com.apple.quarantine "/Applications/打工人計時器.app"
 | macOS | `~/Library/Application Support/partimer/` |
 | Windows | `%APPDATA%\partimer\`（通常是 `C:\Users\<你>\AppData\Roaming\partimer\`） |
 | Ubuntu | `~/.local/share/partimer/` |
+
+**Windows 免安裝版**：只要 `partimer.exe` 旁邊有 `partimer-data` 資料夾，資料就存在那個資料夾裡（連瀏覽器元件的快取也是），可以整包複製到隨身碟或另一台電腦。刪掉或改名這個資料夾，就會改用上面的 `%APPDATA%\partimer\`。注意：
+
+- 不要放在 `C:\Program Files` 這類需要管理員權限才能寫入的地方，否則無法存檔（面板會提示）。
+- 安裝版和免安裝版不能同時執行（第二個打開時只會叫出已經在跑的那個）。
+- 「開機自動啟動」記住的是 `partimer.exe` 當時的位置，搬移資料夾後請到設定關掉再打開一次。
+- 需要 Microsoft Edge WebView2 Runtime；Windows 11 與大部分 Windows 10 已內建，沒有的話安裝版會自動安裝，免安裝版請到微軟網站下載「Evergreen」版本。
 
 資料夾裡有：
 

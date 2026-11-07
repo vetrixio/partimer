@@ -6,7 +6,7 @@ mod ticker;
 mod tray;
 pub mod windows;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use chrono::Utc;
@@ -44,40 +44,93 @@ pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-const DATA_DIR_FALLBACK: &str = "partimer-data";
+/// Folder next to the executable: the fallback when the system has no data folder, and the
+/// marker of the Windows portable build (the folder ships in the portable zip).
+const DATA_DIR_BESIDE_EXE: &str = "partimer-data";
 
 /// Ctrl+Alt+P everywhere; on macOS this is Ctrl+Option+P.
 const SHORTCUT: &str = "Ctrl+Alt+P";
 
-/// The data folder, or `<exe dir>/partimer-data` when the system has no data folder.
-/// Returns whether the fallback was used, so the panel can say where the data went.
-fn resolve_data_dir(system: Option<PathBuf>, exe: Option<PathBuf>) -> (PathBuf, bool) {
+/// Where the data folder came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DataLocation {
+    System,
+    /// Windows portable build: `partimer-data` beside `partimer.exe`.
+    Portable,
+    /// The system has no data folder.
+    Fallback,
+}
+
+/// `<exe dir>/partimer-data` when that folder exists.
+fn portable_dir(exe: Option<&Path>, is_dir: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    let dir = exe?.parent()?.join(DATA_DIR_BESIDE_EXE);
+    is_dir(&dir).then_some(dir)
+}
+
+/// The portable folder if there is one, else the system data folder, else
+/// `<exe dir>/partimer-data`.
+fn resolve_data_dir(
+    portable: Option<PathBuf>,
+    system: Option<PathBuf>,
+    exe: Option<PathBuf>,
+) -> (PathBuf, DataLocation) {
+    if let Some(dir) = portable {
+        return (dir, DataLocation::Portable);
+    }
     match system {
-        Some(dir) => (dir, false),
+        Some(dir) => (dir, DataLocation::System),
         None => {
             let base = exe
                 .as_deref()
                 .and_then(|e| e.parent())
                 .map(PathBuf::from)
                 .unwrap_or_default();
-            (base.join(DATA_DIR_FALLBACK), true)
+            (base.join(DATA_DIR_BESIDE_EXE), DataLocation::Fallback)
         }
     }
 }
 
+/// Create and remove a probe file, so an unwritable portable folder (for example under
+/// `C:\Program Files`) is reported at start instead of only as failing saves.
+fn check_writable(dir: &Path) -> std::io::Result<()> {
+    let probe = dir.join(".partimer-write-test");
+    std::fs::write(&probe, b"")?;
+    std::fs::remove_file(&probe)
+}
+
 fn open_session() -> Session<RealFs> {
-    let (dir, fallback) = resolve_data_dir(default_dir(), std::env::current_exe().ok());
+    let exe = std::env::current_exe().ok();
+    // Portable mode is a Windows feature: the macOS executable sits inside the read-only app
+    // bundle and the AppImage one inside a temporary mount.
+    let portable = if cfg!(windows) {
+        portable_dir(exe.as_deref(), Path::is_dir)
+    } else {
+        None
+    };
+    let (dir, location) = resolve_data_dir(portable, default_dir(), exe);
     let mut session = Session::open(
         RealFs,
         Paths { dir: dir.clone() },
         Box::new(SystemZone),
         Utc::now(),
     );
-    if fallback {
-        session.push_notice(
+    match location {
+        DataLocation::System => {}
+        DataLocation::Fallback => session.push_notice(
             NoticeKind::Info,
             format!("找不到系統的應用程式資料夾，資料改存在：{}", dir.display()),
-        );
+        ),
+        DataLocation::Portable => match check_writable(&dir) {
+            // WebView2 keeps its own files (cache, storage) in the portable folder too.
+            Ok(()) => windows::set_webview_dir(dir.join("webview")),
+            Err(e) => session.push_notice(
+                NoticeKind::Info,
+                format!(
+                    "免安裝版的資料夾無法寫入，變更不會存檔：{}（{e}）。請把整個 partimer 資料夾移到可以寫入的位置，例如桌面或文件。",
+                    dir.display()
+                ),
+            ),
+        },
     }
     session
 }
@@ -228,25 +281,61 @@ mod tests {
 
     #[test]
     fn system_data_dir_is_used_when_available() {
-        let (dir, fallback) = resolve_data_dir(
+        let (dir, at) = resolve_data_dir(
+            None,
             Some(PathBuf::from("/home/u/.local/share/partimer")),
             Some(PathBuf::from("/opt/partimer/partimer")),
         );
         assert_eq!(dir, PathBuf::from("/home/u/.local/share/partimer"));
-        assert!(!fallback);
+        assert_eq!(at, DataLocation::System);
     }
 
     #[test]
     fn missing_system_dir_falls_back_next_to_executable() {
-        let (dir, fallback) = resolve_data_dir(None, Some(PathBuf::from("/opt/partimer/partimer")));
+        let (dir, at) = resolve_data_dir(None, None, Some(PathBuf::from("/opt/partimer/partimer")));
         assert_eq!(dir, PathBuf::from("/opt/partimer/partimer-data"));
-        assert!(fallback);
+        assert_eq!(at, DataLocation::Fallback);
     }
 
     #[test]
     fn missing_exe_path_falls_back_to_relative_folder() {
-        let (dir, fallback) = resolve_data_dir(None, None);
+        let (dir, at) = resolve_data_dir(None, None, None);
         assert_eq!(dir, PathBuf::from("partimer-data"));
-        assert!(fallback);
+        assert_eq!(at, DataLocation::Fallback);
+    }
+
+    #[test]
+    fn portable_folder_wins_over_the_system_folder() {
+        let (dir, at) = resolve_data_dir(
+            Some(PathBuf::from(r"D:\tools\partimer\partimer-data")),
+            Some(PathBuf::from(r"C:\Users\u\AppData\Roaming\partimer")),
+            Some(PathBuf::from(r"D:\tools\partimer\partimer.exe")),
+        );
+        assert_eq!(dir, PathBuf::from(r"D:\tools\partimer\partimer-data"));
+        assert_eq!(at, DataLocation::Portable);
+    }
+
+    #[test]
+    fn portable_folder_is_the_partimer_data_folder_beside_the_exe() {
+        let exe = PathBuf::from("/x/partimer/partimer.exe");
+        let found = portable_dir(Some(&exe), |p| p == Path::new("/x/partimer/partimer-data"));
+        assert_eq!(found, Some(PathBuf::from("/x/partimer/partimer-data")));
+    }
+
+    #[test]
+    fn no_portable_mode_without_the_folder_or_exe_path() {
+        let exe = PathBuf::from("/x/partimer/partimer.exe");
+        assert_eq!(portable_dir(Some(&exe), |_| false), None);
+        assert_eq!(portable_dir(None, |_| true), None);
+    }
+
+    #[test]
+    fn writable_probe_leaves_nothing_behind() {
+        let dir = std::env::temp_dir().join(format!("partimer-probe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(check_writable(&dir).is_ok());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(check_writable(&dir.join("missing")).is_err());
     }
 }

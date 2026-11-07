@@ -77,6 +77,14 @@ Test on Windows 10 or 11 (note which).
 
 - [ ] **W18** Chinese IME while timing — Microsoft Bopomofo (注音), Microsoft Changjie (倉頡) and Microsoft Pinyin (拼音): type a sentence in 標題 and several lines in 內容 for at least a minute (past a minute change of the clock). The candidate window never closes by itself, no characters are lost or duplicated, the caret does not jump. Press Ctrl+S while composing: nothing happens until you commit. 中文輸入模式下按 Ctrl+S (IME switched on, nothing being composed): it saves. Click STOP with an uncommitted composition: the entry has the committed text.
 
+### Portable zip (Windows)
+
+- [ ] **W20** Unzip `partimer_<version>_windows_x64_portable.zip` to the Desktop and run `partimer\partimer.exe` (uninstall the installed version first, or quit it — only one can run). It starts without installing; SmartScreen may ask once. 設定 → 資料夾 shows `…\partimer\partimer-data`, and after a START/STOP that folder holds `data.json`, `backups\`, `activity.log` and `webview\`; nothing new appears in `%APPDATA%\partimer`.
+- [ ] **W21** Copy the whole `partimer` folder to a USB stick or another PC and run it there: the same clients, projects and records show up.
+- [ ] **W22** Rename `partimer-data` and start again: the app uses `%APPDATA%\partimer` (the installed version's data). Rename it back: the portable data is back.
+- [ ] **W23** Put the `partimer` folder under `C:\Program Files` (admin needed to copy) and run it as a normal user: the panel shows 「免安裝版的資料夾無法寫入…」 and the save error; the app does not crash.
+- [ ] **W24** Turn on 開機自動啟動 in the portable copy, sign out and in: it starts from that folder. Move the folder, turn the option off and on again: it starts from the new place.
+
 ## Ubuntu
 
 Test on Ubuntu 24.04 or later in the default (Wayland) session, and the X11 items in an 「Ubuntu on Xorg」 session.
