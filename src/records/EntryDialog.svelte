@@ -96,86 +96,86 @@
 
 <div class="backdrop" role="presentation">
   <div class="dialog" role="dialog" aria-modal="true" aria-label={id === null ? "新增紀錄" : "編輯紀錄"}>
-  <!-- novalidate: the browser's own validation bubbles (step mismatch etc.) are not in
-       Traditional Chinese and vary by WebView; save() and the backend report errors instead. -->
-  <form
-    novalidate
-    onsubmit={(ev) => {
-      ev.preventDefault();
-      void save();
-    }}
-  >
-    <h2>{id === null ? "新增紀錄" : "編輯紀錄"}</h2>
+    <!-- novalidate: the browser's own validation bubbles (step mismatch etc.) are not in
+         Traditional Chinese and vary by WebView; save() and the backend report errors instead. -->
+    <form
+      novalidate
+      onsubmit={(ev) => {
+        ev.preventDefault();
+        void save();
+      }}
+    >
+      <h2>{id === null ? "新增紀錄" : "編輯紀錄"}</h2>
 
-    <label>
-      <span>專案</span>
-      <select bind:value={form.projectId} bind:this={first}>
-        {#each catalog.clients as c (c.id)}
-          <optgroup label={c.archived ? `${c.name}（已封存）` : c.name}>
-            {#each c.projects as p (p.id)}
-              <option value={p.id}>{p.archived ? `${p.name}（已封存）` : p.name}</option>
-            {/each}
-          </optgroup>
-        {/each}
-      </select>
-    </label>
-
-    <div class="row">
       <label>
-        <span>開始</span>
-        <input type="datetime-local" bind:value={form.startLocal} required />
+        <span>專案</span>
+        <select bind:value={form.projectId} bind:this={first}>
+          {#each catalog.clients as c (c.id)}
+            <optgroup label={c.archived ? `${c.name}（已封存）` : c.name}>
+              {#each c.projects as p (p.id)}
+                <option value={p.id}>{p.archived ? `${p.name}（已封存）` : p.name}</option>
+              {/each}
+            </optgroup>
+          {/each}
+        </select>
       </label>
-      <label>
-        <span>結束</span>
-        <input
-          type="datetime-local"
-          value={form.endLocal ?? ""}
-          oninput={(e) => (form.endLocal = e.currentTarget.value || null)}
-          disabled={form.stillRunning}
-          required={!form.stillRunning}
-        />
-      </label>
-    </div>
 
-    {#if canStayRunning}
-      <label class="check">
-        <input
-          type="checkbox"
-          checked={form.stillRunning}
-          onchange={(e) => toggleRunning(e.currentTarget.checked)}
-        />
-        <span>仍在計時</span>
-      </label>
-    {/if}
+      <div class="row">
+        <label>
+          <span>開始</span>
+          <input type="datetime-local" bind:value={form.startLocal} required />
+        </label>
+        <label>
+          <span>結束</span>
+          <input
+            type="datetime-local"
+            value={form.endLocal ?? ""}
+            oninput={(e) => (form.endLocal = e.currentTarget.value || null)}
+            disabled={form.stillRunning}
+            required={!form.stillRunning}
+          />
+        </label>
+      </div>
 
-    <label>
-      <span>暫停分鐘數</span>
-      <input type="number" min="0" step="1" bind:value={form.pausedMinutes} />
-    </label>
-
-    <label>
-      <span>標題</span>
-      <input type="text" bind:value={form.title} />
-    </label>
-
-    <label>
-      <span>內容</span>
-      <textarea rows="6" bind:value={form.content}></textarea>
-    </label>
-
-    {#if error}
-      <p class="error" role="alert">{error}</p>
-    {/if}
-
-    <div class="actions">
-      {#if id !== null}
-        <button type="button" class="danger" onclick={remove} disabled={busy}>刪除</button>
+      {#if canStayRunning}
+        <label class="check">
+          <input
+            type="checkbox"
+            checked={form.stillRunning}
+            onchange={(e) => toggleRunning(e.currentTarget.checked)}
+          />
+          <span>仍在計時</span>
+        </label>
       {/if}
-      <span class="spacer"></span>
-      <button type="button" onclick={oncancel} disabled={busy}>取消</button>
-      <button type="submit" class="primary" disabled={busy}>儲存</button>
-    </div>
-  </form>
+
+      <label>
+        <span>暫停分鐘數</span>
+        <input type="number" min="0" step="1" bind:value={form.pausedMinutes} />
+      </label>
+
+      <label>
+        <span>標題</span>
+        <input type="text" bind:value={form.title} />
+      </label>
+
+      <label>
+        <span>內容</span>
+        <textarea rows="6" bind:value={form.content}></textarea>
+      </label>
+
+      {#if error}
+        <p class="error" role="alert">{error}</p>
+      {/if}
+
+      <div class="actions">
+        {#if id !== null}
+          <button type="button" class="danger" onclick={remove} disabled={busy}>刪除</button>
+        {/if}
+        <span class="spacer"></span>
+        <button type="button" onclick={oncancel} disabled={busy}>取消</button>
+        <button type="submit" class="primary" disabled={busy}>儲存</button>
+      </div>
+    </form>
   </div>
 </div>
 
