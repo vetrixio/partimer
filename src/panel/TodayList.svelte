@@ -36,7 +36,7 @@
 
 <section class="today" aria-label="今日紀錄">
   <h2>今日紀錄</h2>
-  <div class="scroll" data-autosize-scroll>
+  <div class="scroll" class:filled={entries.length > 0} data-autosize-scroll>
     <div>
       {#if entries.length === 0}
         <p class="empty">今天還沒有紀錄</p>
@@ -74,10 +74,11 @@
 </section>
 
 <style>
+  /* Shrinks (the panel caps its height) down to the heading plus `.scroll.filled`'s floor,
+     never to nothing. */
   .today {
     display: flex;
     flex-direction: column;
-    min-height: 0;
   }
   h2 {
     font-size: 0.85rem;
@@ -88,6 +89,10 @@
   .scroll {
     min-height: 0;
     overflow-y: auto;
+  }
+  /* About one entry stays visible however many notices push from above. */
+  .scroll.filled {
+    min-height: 3em;
   }
   .empty {
     margin: 4px 0;

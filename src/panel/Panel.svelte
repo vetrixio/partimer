@@ -56,15 +56,17 @@
     panel?.running ? `${panel.running.date}T${panel.running.startHhmm}` : null,
   );
 
-  function apply(next: PanelState, seq: number) {
-    if (seq < appliedSeq) return;
+  /** Returns whether `next` was taken. */
+  function apply(next: PanelState, seq: number): boolean {
+    if (seq < appliedSeq) return false;
     // Generations only grow; an older one would bring back text of a finished entry.
-    if (panel && next.draft.generation < panel.draft.generation) return;
+    if (panel && next.draft.generation < panel.draft.generation) return false;
     appliedSeq = seq;
     if (!panel || next.draft.generation !== panel.draft.generation) edited = null;
     panel = next;
     fetchedAt = Date.now();
     now = fetchedAt;
+    return true;
   }
 
   async function refresh() {
@@ -73,14 +75,15 @@
       return;
     }
     const seq = ++requestSeq;
-    fetchedDay = localDateKey(new Date());
+    const day = localDateKey(new Date());
     try {
       const next = await api.getPanelState();
       if (busy) {
         refreshAfterCommand = true;
         return;
       }
-      apply(next, seq);
+      // Only a successful fetch counts for the day: after a failure the next second retries.
+      if (apply(next, seq)) fetchedDay = day;
     } catch (e) {
       console.warn("partimer: get_panel_state", e);
     }
@@ -102,13 +105,16 @@
       return false;
     }
     const generation = panel.draft.generation;
+    /** The backend's answer, even if `apply` dropped it as out of order. */
+    let result: PanelState | null = null;
     busy = true;
     error = null;
     try {
       if (confirm && !(await confirm())) return false;
       const v = f ? await f.getValues() : { title: "", content: "" };
       const seq = ++requestSeq;
-      apply(await run(v), seq);
+      result = await run(v);
+      apply(result, seq);
       return true;
     } catch (e) {
       error = String(e);
@@ -116,8 +122,12 @@
     } finally {
       busy = false;
       // Same draft → the same fields stay: let them sync again. A new generation rebuilds
-      // them, and the old ones stay closed (their text belongs to the finished command).
-      if (f && panel?.draft.generation === generation) f.reopen();
+      // them, and the old ones stay closed (their text belongs to the finished command) —
+      // also when the new state was not shown yet, so the backend's answer counts too.
+      const sameDraft =
+        panel?.draft.generation === generation &&
+        (result === null || result.draft.generation === generation);
+      if (f && sameDraft) f.reopen();
       if (refreshAfterCommand) {
         refreshAfterCommand = false;
         void refresh();
@@ -399,6 +409,9 @@
     flex-direction: column;
     gap: 10px;
     max-height: 100vh;
+    /* Only when even the shrunk today list cannot make room (many notices): scroll as a
+       whole instead of clipping the buttons. */
+    overflow-y: auto;
     padding: 12px 14px;
   }
   /* Everything keeps its height; only the today list gives way (and scrolls). */

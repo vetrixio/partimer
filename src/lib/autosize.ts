@@ -15,6 +15,9 @@ import {
 
 const MIN_HEIGHT = 220;
 const SCREEN_MARGIN = 40;
+/** A failed resize is tried again after RETRY_MS × attempt, up to MAX_RETRIES times. */
+const RETRY_MS = 500;
+const MAX_RETRIES = 5;
 
 /** Natural content height in CSS pixels. */
 function naturalHeight(root: HTMLElement): number {
@@ -47,11 +50,34 @@ export function windowHeight(natural: number, available: number): number {
   return Math.max(MIN_HEIGHT, Math.min(Math.ceil(natural), max));
 }
 
+interface Span {
+  y: number;
+  height: number;
+}
+
+/**
+ * Pure part: where the window's top should go after a resize, or null to stay. A window that
+ * would stick out below the work area moves up; one whose bottom sat on the work area's bottom
+ * (opened above a bottom taskbar) stays snapped there when it shrinks. A window at the top
+ * never follows the bottom.
+ */
+export function snappedTop(area: Span, before: Span, after: Span): number | null {
+  const bottom = area.y + area.height;
+  const overflows = after.y + after.height > bottom;
+  const wasOnBottom =
+    Math.abs(before.y + before.height - bottom) < 2 && before.y > area.y + 2;
+  if (!overflows && !wasOnBottom) return null;
+  const y = Math.max(area.y, bottom - after.height);
+  return Math.abs(y - after.y) < 1 ? null : y;
+}
+
 /** Start following `root`; returns a function that stops. */
 export function autosize(root: HTMLElement, width = 360): () => void {
   const win = getCurrentWindow();
   let last = 0;
   let scheduled = false;
+  let failures = 0;
+  let stopped = false;
   let running: Promise<void> = Promise.resolve();
 
   const apply = async () => {
@@ -63,28 +89,42 @@ export function autosize(root: HTMLElement, width = 360): () => void {
     const h = windowHeight(natural, area.height);
     // Sub-pixel rounding of the new size can make the measurement flip by 1px; ignore that.
     if (Math.abs(h - last) < 2) return;
-    last = h;
-    await win.setSize(new LogicalSize(width, h));
-    // Opened above a bottom taskbar, growing would push the buttons under it: move up.
     const scale = await win.scaleFactor();
-    const pos = (await win.outerPosition()).toLogical(scale);
-    const outer = (await win.outerSize()).toLogical(scale);
-    const bottom = area.top + area.height;
-    if (pos.y + outer.height > bottom) {
-      const y = Math.max(area.top, bottom - outer.height);
-      await win.setPosition(new LogicalPosition(pos.x, y));
+    const outerSpan = async () => {
+      const pos = (await win.outerPosition()).toLogical(scale);
+      const outer = (await win.outerSize()).toLogical(scale);
+      return { x: pos.x, y: pos.y, height: outer.height };
+    };
+    const before = await outerSpan();
+    try {
+      await win.setSize(new LogicalSize(width, h));
+    } catch (e) {
+      // Not remembered as applied, so the same height is tried again.
+      last = 0;
+      if (!stopped && failures < MAX_RETRIES) {
+        failures += 1;
+        setTimeout(schedule, RETRY_MS * failures);
+      }
+      throw e;
     }
+    failures = 0;
+    last = h;
+    // Opened above a bottom taskbar: growing would push the buttons under it (move up), and
+    // after shrinking the panel stays on the taskbar instead of floating above it.
+    const after = await outerSpan();
+    const y = snappedTop({ y: area.top, height: area.height }, before, after);
+    if (y !== null) await win.setPosition(new LogicalPosition(after.x, y));
   };
 
-  const schedule = () => {
-    if (scheduled) return;
+  function schedule() {
+    if (scheduled || stopped) return;
     scheduled = true;
     requestAnimationFrame(() => {
       scheduled = false;
       // One resize at a time, in order.
       running = running.then(apply).catch((e) => console.warn("partimer: autosize", e));
     });
-  };
+  }
 
   const resize = new ResizeObserver(schedule);
   const observeScrollContent = () => {
@@ -103,6 +143,7 @@ export function autosize(root: HTMLElement, width = 360): () => void {
   schedule();
 
   return () => {
+    stopped = true;
     resize.disconnect();
     mutations.disconnect();
   };
