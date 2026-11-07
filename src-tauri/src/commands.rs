@@ -249,10 +249,22 @@ pub async fn export_csv(
     };
     let path = picked
         .into_path()
-        .map_err(|e| format!("無法使用這個位置：{e}"))?;
+        .map_err(|e| format!("無法使用這個位置（{e}）"))?;
     let bytes = session(&state).export_csv(query);
-    std::fs::write(&path, bytes).map_err(|e| format!("匯出失敗：{e}"))?;
+    std::fs::write(&path, bytes).map_err(|e| export_error(&e))?;
     Ok(true)
+}
+
+/// Chinese reason first, the raw (often English) io error in parentheses.
+fn export_error(e: &std::io::Error) -> String {
+    use std::io::ErrorKind;
+    let reason = match e.kind() {
+        ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem => "沒有權限寫入這個位置",
+        ErrorKind::StorageFull => "磁碟空間不足",
+        ErrorKind::NotFound => "找不到這個資料夾",
+        _ => "無法寫入檔案",
+    };
+    format!("匯出失敗：{reason}（{e}）")
 }
 
 // ---- catalog ----
@@ -503,6 +515,19 @@ mod tests {
             ..WidgetSettings::default()
         };
         assert_eq!(widget_view(&chosen).enabled, chosen.enabled);
+    }
+
+    #[test]
+    fn export_error_is_chinese_with_raw_error() {
+        let e = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            export_error(&e),
+            format!("匯出失敗：沒有權限寫入這個位置（{e}）")
+        );
+        let e = std::io::Error::from(std::io::ErrorKind::StorageFull);
+        assert_eq!(export_error(&e), format!("匯出失敗：磁碟空間不足（{e}）"));
+        let e = std::io::Error::other("boom");
+        assert_eq!(export_error(&e), "匯出失敗：無法寫入檔案（boom）");
     }
 
     #[test]

@@ -105,9 +105,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn autostart_help_names_the_app_or_command() {
-        let help = autostart_help();
-        assert!(help.contains("打工人計時器") || help.contains("`partimer`"));
+    fn autostart_help_is_the_platform_text() {
+        let expected = if cfg!(target_os = "macos") {
+            "系統設定 → 一般 → 登入項目 → 按 + 加入 打工人計時器"
+        } else if cfg!(target_os = "windows") {
+            "按 Win+R 輸入 `shell:startup`，把 打工人計時器 的捷徑放進去"
+        } else {
+            "開啟『初始啟動程式』，新增指令 `partimer`"
+        };
+        assert_eq!(autostart_help(), expected);
     }
 
     #[test]

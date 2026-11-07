@@ -32,9 +32,11 @@ const WIDGET_HEIGHT: f64 = 40.0;
 const WIDGET_MARGIN_RIGHT: f64 = 24.0;
 const WIDGET_MARGIN_TOP: f64 = 64.0;
 
-/// Serialises `ensure_widget` runs (the ticker and the settings window can ask at the same
-/// time), so two of them never both decide to create the window. Never held with the session.
-static WIDGET_OPS: Mutex<()> = Mutex::new(());
+/// Serialises the worker jobs, so two of them (e.g. a double click on 設定, or the ticker and
+/// the settings window both calling `ensure_widget`) never both see "no window" and build the
+/// same label twice. Taken before the session lock, never the other way round, and never on
+/// the main thread.
+static WINDOW_OPS: Mutex<()> = Mutex::new(());
 
 /// Where the panel was asked to open from; decides where it is placed.
 #[derive(Debug, Clone, Copy)]
@@ -118,6 +120,7 @@ pub fn ensure_widget(app: &AppHandle) {
 fn on_worker(app: &AppHandle, f: impl FnOnce(&AppHandle) -> tauri::Result<()> + Send + 'static) {
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let _ops = lock(&WINDOW_OPS);
         if let Err(e) = f(&app) {
             eprintln!("partimer: window: {e}");
         }
@@ -125,7 +128,6 @@ fn on_worker(app: &AppHandle, f: impl FnOnce(&AppHandle) -> tauri::Result<()> + 
 }
 
 fn ensure_widget_now(app: &AppHandle) -> tauri::Result<()> {
-    let _ops = lock(&WIDGET_OPS);
     let Some(state) = app.try_state::<AppState>() else {
         return Ok(());
     };
