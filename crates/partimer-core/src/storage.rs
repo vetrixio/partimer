@@ -19,6 +19,8 @@ pub trait Fs {
     /// True when the path exists *or cannot be checked*: callers use it to avoid replacing a
     /// file, so "unknown" must never read as "free".
     fn exists(&self, p: &Path) -> bool;
+    /// Three-way check: `Ok(true)` exists, `Ok(false)` certainly missing, `Err` unknown.
+    fn try_exists(&self, p: &Path) -> io::Result<bool>;
     fn create_dir_all(&self, p: &Path) -> io::Result<()>;
     /// Direct children only; a missing directory yields an empty list.
     fn list(&self, dir: &Path) -> io::Result<Vec<PathBuf>>;
@@ -63,6 +65,10 @@ impl Fs for RealFs {
 
     fn exists(&self, p: &Path) -> bool {
         exists_or_unknown(p.try_exists())
+    }
+
+    fn try_exists(&self, p: &Path) -> io::Result<bool> {
+        p.try_exists()
     }
 
     fn create_dir_all(&self, p: &Path) -> io::Result<()> {
@@ -162,6 +168,12 @@ pub enum LoadNotice {
         error: String,
         backup_date: Option<NaiveDate>,
     },
+    /// `data.json` is missing or corrupt (then kept as `corrupt_path`) and the backups folder
+    /// cannot be listed (raw io error). Starts empty; saving must stay blocked.
+    BackupsUnreadable {
+        error: String,
+        corrupt_path: Option<PathBuf>,
+    },
     /// The data (from `data.json` or a backup) has a `version` newer than this app knows.
     /// It is shown read-only and never written; saving must stay blocked.
     NewerVersion {
@@ -252,6 +264,13 @@ fn newest_good_backup(
     }))
 }
 
+fn split_result<T>(r: Result<Option<T>, String>) -> (Option<T>, Option<String>) {
+    match r {
+        Ok(v) => (v, None),
+        Err(e) => (None, Some(e)),
+    }
+}
+
 fn split_backup(b: Option<(NaiveDate, Data)>) -> (Data, Option<NaiveDate>) {
     match b {
         Some((d, data)) => (data, Some(d)),
@@ -281,13 +300,19 @@ fn unique_corrupt_path(
 pub fn load(fs: &dyn Fs, paths: &Paths, zone: &dyn LocalZone, now: DateTime<Utc>) -> Loaded {
     let today = crate::zone::local_date(zone, now);
     // Backups are only looked at when needed; a listing error is reported, not swallowed.
+    // Set only where the listing error is not already part of the load notice.
     let mut backup_error = None;
-    let mut backup = || match newest_good_backup(fs, paths, today) {
-        Ok(b) => b,
-        Err(e) => {
-            backup_error = Some(e.to_string());
-            None
-        }
+    let backup = || newest_good_backup(fs, paths, today).map_err(|e| e.to_string());
+    // No data file to use and the backups cannot even be listed: starting empty and saving
+    // would make a later restore impossible (and daily backups of empty data would push the
+    // good ones out), so nothing is written this run.
+    let backups_unreadable = |error: String, corrupt_path: Option<PathBuf>| {
+        Loaded::new(Data::default())
+            .notice(LoadNotice::BackupsUnreadable {
+                error,
+                corrupt_path,
+            })
+            .blocked()
     };
     let restored = |data: Data, notice: LoadNotice| {
         if let Some(newer) = newer_version(&data) {
@@ -327,26 +352,36 @@ pub fn load(fs: &dyn Fs, paths: &Paths, zone: &dyn LocalZone, now: DateTime<Utc>
                             .map_err(|e| e.to_string())
                     });
                 match (moved, b) {
-                    (Err(e), b) => unreadable(b, UnreadableReason::CannotKeepCorrupt, e),
-                    (Ok(corrupt_path), Some((backup_date, data))) => restored(
+                    (Err(e), b) => {
+                        let (b, list_error) = split_result(b);
+                        backup_error = list_error;
+                        unreadable(b, UnreadableReason::CannotKeepCorrupt, e)
+                    }
+                    (Ok(corrupt_path), Err(e)) => backups_unreadable(e, Some(corrupt_path)),
+                    (Ok(corrupt_path), Ok(Some((backup_date, data)))) => restored(
                         data,
                         LoadNotice::RestoredCorrupt {
                             backup_date,
                             corrupt_path,
                         },
                     ),
-                    (Ok(corrupt_path), None) => Loaded::new(Data::default())
+                    (Ok(corrupt_path), Ok(None)) => Loaded::new(Data::default())
                         .notice(LoadNotice::CorruptNoBackup { corrupt_path }),
                 }
             }
         },
         Err(e) if e.kind() == io::ErrorKind::NotFound => match backup() {
-            Some((backup_date, data)) => {
+            Ok(Some((backup_date, data))) => {
                 restored(data, LoadNotice::RestoredMissing { backup_date })
             }
-            None => Loaded::new(Data::default()),
+            Ok(None) => Loaded::new(Data::default()),
+            Err(e) => backups_unreadable(e, None),
         },
-        Err(e) => unreadable(backup(), UnreadableReason::ReadFailed, e.to_string()),
+        Err(e) => {
+            let (b, list_error) = split_result(backup());
+            backup_error = list_error;
+            unreadable(b, UnreadableReason::ReadFailed, e.to_string())
+        }
     };
     Loaded {
         backup_error,
@@ -362,7 +397,8 @@ pub fn ensure_daily_backup(fs: &dyn Fs, paths: &Paths, date: NaiveDate) -> io::R
         Err(e) => return Err(e),
     };
     let target = paths.backup_for(date);
-    if fs.exists(&target) {
+    // Unknown is an error, not "done": the caller then tries again on the next save.
+    if fs.try_exists(&target)? {
         return Ok(false);
     }
     // Never back up a file that does not parse: it would only displace good backups.
@@ -785,19 +821,81 @@ mod tests {
     }
 
     #[test]
-    fn backup_folder_list_error_is_reported() {
+    fn missing_file_with_unlistable_backups_blocks_saving() {
         let fs = MemFs::new();
         fs.put(paths().backup_for(d(10, 5)), GOOD_A.as_bytes());
         fs.fail_lists.set(true);
         let l = run_load(&fs);
         assert_eq!(l.data, Data::default());
         let io = io::Error::from(io::ErrorKind::PermissionDenied).to_string();
-        assert_eq!(l.backup_error, Some(io));
+        assert_eq!(
+            l.notice,
+            Some(LoadNotice::BackupsUnreadable {
+                error: io,
+                corrupt_path: None
+            })
+        );
+        assert!(l.save_blocked);
+        // One notice only: the error is not reported a second time.
+        assert_eq!(l.backup_error, None);
+        assert!(!fs.exists(&paths().data()));
         // Reading data.json fine never looks at the backups.
         let fs = MemFs::new();
         fs.put(paths().data(), GOOD_A.as_bytes());
         fs.fail_lists.set(true);
-        assert_eq!(run_load(&fs).backup_error, None);
+        let l = run_load(&fs);
+        assert_eq!(
+            (l.notice, l.backup_error, l.save_blocked),
+            (None, None, false)
+        );
+    }
+
+    #[test]
+    fn corrupt_file_with_unlistable_backups_blocks_saving() {
+        let fs = MemFs::new();
+        fs.put(paths().data(), b"{broken");
+        fs.fail_lists.set(true);
+        let l = run_load(&fs);
+        let corrupt = paths().corrupt("20261007-090203");
+        let io = io::Error::from(io::ErrorKind::PermissionDenied).to_string();
+        assert_eq!(
+            l.notice,
+            Some(LoadNotice::BackupsUnreadable {
+                error: io,
+                corrupt_path: Some(corrupt.clone())
+            })
+        );
+        assert!(l.save_blocked);
+        assert_eq!(fs.get(&corrupt).unwrap(), b"{broken");
+    }
+
+    #[test]
+    fn first_run_without_backups_folder_is_not_blocked() {
+        let l = run_load(&MemFs::new());
+        assert_eq!(
+            (l.notice, l.backup_error, l.save_blocked),
+            (None, None, false)
+        );
+        let rd = tempfile::tempdir().unwrap();
+        let p = Paths {
+            dir: rd.path().join("partimer"),
+        };
+        let l = load(&RealFs, &p, tz("Asia/Taipei").as_ref(), now());
+        assert_eq!(
+            (l.notice, l.backup_error, l.save_blocked),
+            (None, None, false)
+        );
+    }
+
+    #[test]
+    fn daily_backup_unknown_existence_is_an_error_and_retried() {
+        let fs = MemFs::new();
+        fs.put(paths().data(), GOOD_A.as_bytes());
+        fs.exists_unknown.set(true);
+        assert!(ensure_daily_backup(&fs, &paths(), d(10, 6)).is_err());
+        assert!(fs.get(&paths().backup_for(d(10, 6))).is_none());
+        fs.exists_unknown.set(false);
+        assert!(ensure_daily_backup(&fs, &paths(), d(10, 6)).unwrap());
     }
 
     #[test]

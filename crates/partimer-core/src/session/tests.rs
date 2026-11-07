@@ -1360,14 +1360,39 @@ fn backup_folder_error_is_shown_and_logged() {
         &to_json(&base_data()),
     );
     fs.fail_lists.set(true);
-    let s = open(fs, at(0));
+    let mut s = open(fs, at(0));
     let io = std::io::Error::from(std::io::ErrorKind::PermissionDenied).to_string();
-    let n = notice(&s, NoticeKind::Info).expect("info notice");
+    let n = notice(&s, NoticeKind::Unreadable).expect("blocking notice");
     assert_eq!(
         n.message,
-        format!("無法讀取備份資料夾（{io}），這次沒辦法從備份還原。")
+        format!(
+            "找不到資料檔，且無法讀取備份資料夾（{io}），為避免之後無法從備份還原，這次開啟期間的變更不會存檔。請檢查檔案權限後重開 app。"
+        )
     );
+    assert!(!n.dismissable);
+    assert_eq!(s.panel_state(at(0)).notices.len(), 1, "one merged notice");
     assert!(log_text(&s).contains("backups unreadable"));
+    // Nothing is written this run: not data.json, not a backup of empty data.
+    s.update_settings(|st| st.hourly_reminder = true, at(1));
+    s.flush_on_exit(at(2));
+    assert!(s.fs.get(&paths().data()).is_none());
+}
+
+#[test]
+fn corrupt_file_with_unlistable_backups_names_both() {
+    let fs = MemFs::new();
+    fs.put(paths().data(), b"{broken");
+    fs.fail_lists.set(true);
+    let s = open(fs, at(0));
+    let io = std::io::Error::from(std::io::ErrorKind::PermissionDenied).to_string();
+    let n = notice(&s, NoticeKind::Unreadable).expect("blocking notice");
+    assert_eq!(
+        n.message,
+        format!(
+            "資料檔損壞（已保留為 data.corrupt-20261006-090000.json），且無法讀取備份資料夾（{io}），為避免之後無法從備份還原，這次開啟期間的變更不會存檔。請檢查檔案權限後重開 app。"
+        )
+    );
+    assert_eq!(s.panel_state(at(0)).notices.len(), 1);
 }
 
 #[test]

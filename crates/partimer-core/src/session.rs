@@ -1141,6 +1141,25 @@ impl<F: Fs> Session<F> {
                 }
                 (NoticeKind::Unreadable, message, note)
             }
+            LoadNotice::BackupsUnreadable {
+                error,
+                corrupt_path,
+            } => {
+                let what = match &corrupt_path {
+                    Some(p) => format!("資料檔損壞（已保留為 {}）", file_name(p)),
+                    None => "找不到資料檔".to_string(),
+                };
+                (
+                    NoticeKind::Unreadable,
+                    format!(
+                        "{what}，且無法讀取備份資料夾（{error}），為避免之後無法從備份還原，這次開啟期間的變更不會存檔。請檢查檔案權限後重開 app。"
+                    ),
+                    format!(
+                        "data file {}, backups unreadable ({error}), saving blocked",
+                        if corrupt_path.is_some() { "corrupt" } else { "missing" }
+                    ),
+                )
+            }
             LoadNotice::NewerVersion { version } => (
                 NoticeKind::NewerVersion,
                 "資料檔是由較新版本的打工人計時器建立的，為避免覆蓋，這次開啟期間的變更不會存檔。請改用較新的版本。".to_string(),
