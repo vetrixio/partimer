@@ -2,10 +2,11 @@ use chrono::{DateTime, Utc};
 
 use crate::model::Entry;
 
-/// Worked seconds: end point (end, else pause start, else now) minus start minus paused total, floored at 0.
+/// Worked seconds: end point (end, else pause start, else now) minus start minus paused total
+/// (a corrupt negative total counts as 0), floored at 0.
 pub fn effective_seconds(e: &Entry, now: DateTime<Utc>) -> i64 {
     let end_point = e.end.or(e.pause_started_at).unwrap_or(now);
-    ((end_point - e.start).num_seconds() - e.paused_seconds).max(0)
+    ((end_point - e.start).num_seconds() - e.paused_seconds.max(0)).max(0)
 }
 
 /// Round seconds to the nearest minute; negatives count as 0.
@@ -87,6 +88,30 @@ mod tests {
     }
 
     #[test]
+    fn end_wins_over_pause_start() {
+        // Corrupt combination (finished entries clear the pause start): `end` is the end.
+        let e = entry(
+            "2026-10-06T01:00:00Z",
+            Some("2026-10-06T02:00:00Z"),
+            0,
+            Some("2026-10-06T01:10:00Z"),
+        );
+        assert_eq!(effective_seconds(&e, utc("2026-10-06T09:00:00Z")), 3600);
+    }
+
+    #[test]
+    fn negative_paused_seconds_count_as_zero() {
+        // Corrupt data must not add time.
+        let e = entry(
+            "2026-10-06T01:00:00Z",
+            Some("2026-10-06T02:00:00Z"),
+            -600,
+            None,
+        );
+        assert_eq!(effective_seconds(&e, utc("2026-10-06T09:00:00Z")), 3600);
+    }
+
+    #[test]
     fn rounding() {
         assert_eq!(round_minutes(89), 1);
         assert_eq!(round_minutes(90), 2);
@@ -100,6 +125,11 @@ mod tests {
         assert_eq!(hours_decimal(1), "0.02");
         assert_eq!(hours_decimal(10), "0.17");
         assert_eq!(hours_decimal(0), "0.00");
+        assert_eq!(hours_decimal(60), "1.00");
+        assert_eq!(hours_decimal(61), "1.02");
+        assert_eq!(hours_decimal(125), "2.08");
+        assert_eq!(hours_decimal(1439), "23.98");
+        assert_eq!(hours_decimal(6000), "100.00");
     }
 
     #[test]
@@ -107,6 +137,8 @@ mod tests {
         assert_eq!(format_hm(90), "1h 30m");
         assert_eq!(format_hm(45), "45m");
         assert_eq!(format_hm(120), "2h 0m");
+        assert_eq!(format_hm(0), "0m");
+        assert_eq!(format_hm(-3), "0m");
     }
 
     #[test]

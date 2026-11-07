@@ -133,9 +133,49 @@ mod tests {
 
     #[test]
     fn system_zone_roundtrips() {
-        let t = utc("2026-10-06T01:30:00Z");
-        let local = SystemZone.to_local(t);
-        assert_eq!(SystemZone.from_local(local).earliest(), Some(t));
+        // Whatever zone CI runs in: a real instant never maps into a DST gap, and in a
+        // fall-back overlap it may be either of the two candidates.
+        for t in [
+            "2026-10-06T01:30:00Z",
+            "2026-03-08T07:30:00Z",
+            "2026-03-29T01:30:00Z",
+            "2026-11-01T06:30:00Z",
+            "2026-10-25T01:30:00Z",
+        ]
+        .map(utc)
+        {
+            let back = SystemZone.from_local(SystemZone.to_local(t));
+            match back {
+                LocalResult::Single(a) => assert_eq!(a, t),
+                LocalResult::Ambiguous(a, b) => assert!(a == t || b == t, "{t}: {a} / {b}"),
+                LocalResult::None => panic!("{t} mapped into a gap"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_local_input_accepts_single_digit_fields_but_checks_ranges() {
+        // Lenient on purpose: typed input like 9:30 is friendlier than an error.
+        let z = tz("Asia/Taipei");
+        assert_eq!(
+            parse_local_input(z.as_ref(), "2026-10-6T9:30"),
+            Ok(utc("2026-10-06T01:30:00Z"))
+        );
+        for bad in [
+            "2026-13-06T09:30",
+            "2026-10-32T09:30",
+            "2026-02-30T09:30",
+            "2026-10-06T24:00",
+            "2026-10-06T09:60",
+            "2026-10-06T09:30:00",
+            "",
+        ] {
+            assert_eq!(
+                parse_local_input(z.as_ref(), bad),
+                Err(TimeInputError::Format),
+                "{bad}"
+            );
+        }
     }
 
     #[test]
