@@ -399,3 +399,7 @@ Set-up: a project to time. On macOS the clock is off by default: turn on 設定 
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
+- **C10** Fractional display scaling (Windows 設定 → 顯示器 → 縮放 125 % and then 150 %; macOS a scaled external display if available; Ubuntu fractional scaling if enabled): drag the clock somewhere, quit from the tray menu and start again, three times. The clock comes back on exactly the same spot each time (note any drift, even 1 px, and the scale). Then change 透明度 in the settings window: the clock follows at once.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu

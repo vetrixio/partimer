@@ -20,6 +20,16 @@ use crate::{AppState, ShortcutStatus, platform};
 type Res<T> = Result<T, String>;
 
 pub const STATE_CHANGED: &str = "state-changed";
+/// Settings changed (widget look, reminders, autostart): windows that cache settings refetch.
+pub const SETTINGS_CHANGED: &str = "settings-changed";
+
+/// What the floating clock needs every refresh, without building the whole panel state.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimerStatusView {
+    pub status: partimer_core::TimerStatus,
+    pub elapsed_seconds: i64,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +53,12 @@ fn session<'a>(state: &'a State<'_, AppState>) -> MutexGuard<'a, Session<RealFs>
 pub(crate) fn changed(app: &AppHandle) {
     crate::ticker::note_broadcast(app);
     emit_state_changed(app);
+}
+
+fn settings_changed(app: &AppHandle) {
+    if let Err(e) = app.emit(SETTINGS_CHANGED, ()) {
+        eprintln!("partimer: emit {SETTINGS_CHANGED}: {e}");
+    }
 }
 
 pub(crate) fn emit_state_changed(app: &AppHandle) {
@@ -81,6 +97,15 @@ fn mutate(
 #[tauri::command]
 pub fn get_panel_state(state: State<'_, AppState>) -> PanelState {
     session(&state).panel_state(Utc::now())
+}
+
+#[tauri::command]
+pub fn get_timer_status(state: State<'_, AppState>) -> TimerStatusView {
+    let (status, elapsed_seconds) = session(&state).timer_status(Utc::now());
+    TimerStatusView {
+        status,
+        elapsed_seconds,
+    }
 }
 
 /// Draft lives in memory only; no event (other windows do not show it). Ignored when
@@ -419,6 +444,7 @@ pub fn set_autostart(app: AppHandle, state: State<'_, AppState>, enabled: bool) 
         )
     });
     changed(&app);
+    settings_changed(&app);
     settings_view(&app, &state)
 }
 
@@ -431,6 +457,7 @@ pub fn set_widget_settings(
     session(&state).update_settings(|s| s.widget = merge_widget(&s.widget, widget), Utc::now());
     windows::ensure_widget(&app);
     changed(&app);
+    settings_changed(&app);
     settings_view(&app, &state)
 }
 
@@ -454,6 +481,7 @@ pub fn set_hourly_reminder(
 ) -> SettingsView {
     session(&state).update_settings(|s| s.hourly_reminder = enabled, Utc::now());
     changed(&app);
+    settings_changed(&app);
     settings_view(&app, &state)
 }
 

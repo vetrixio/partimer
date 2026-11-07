@@ -33,6 +33,11 @@ export interface EntryView {
   status: TimerStatus;
 }
 
+export interface TimerStatusView {
+  status: TimerStatus;
+  elapsedSeconds: number;
+}
+
 export interface ProjectOption {
   id: Id;
   name: string;
@@ -185,6 +190,8 @@ export type PanelOrigin = "widget" | "tray" | "shortcut";
 export const api = {
   // panel
   getPanelState: () => invoke<PanelState>("get_panel_state"),
+  /** Status and elapsed seconds only (the floating clock). */
+  getTimerStatus: () => invoke<TimerStatusView>("get_timer_status"),
   /** `generation`: the draft the fields were built from; the backend ignores stale syncs. */
   setDraft: (title: string, content: string, generation: number) =>
     invoke<void>("set_draft", { title, content, generation }),
@@ -241,6 +248,11 @@ export const api = {
   togglePanel: (origin: PanelOrigin) => invoke<void>("toggle_panel", { origin }),
   quitApp: () => invoke<void>("quit_app"),
 };
+
+/** Settings changed (e.g. the clock's opacity): refetch cached settings. */
+export function onSettingsChanged(handler: () => void): Promise<UnlistenFn> {
+  return listen("settings-changed", () => handler());
+}
 
 /** Data changed somewhere: refetch what this window shows. */
 export function onStateChanged(handler: () => void): Promise<UnlistenFn> {

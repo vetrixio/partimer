@@ -130,6 +130,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_panel_state,
+            commands::get_timer_status,
             commands::set_draft,
             commands::start,
             commands::stop,

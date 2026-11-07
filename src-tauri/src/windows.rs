@@ -135,7 +135,7 @@ fn ensure_widget_now(app: &AppHandle) -> tauri::Result<()> {
     let (visible, saved) = {
         let session = lock(&state.session);
         let widget = &session.settings().widget;
-        let status = session.panel_state(Utc::now()).status;
+        let (status, _) = session.timer_status(Utc::now());
         let visible = widget_wanted(widget, status);
         let saved = widget
             .x
@@ -177,13 +177,19 @@ fn build_widget(app: &AppHandle, saved: Option<PhysicalPosition<i32>>) -> tauri:
         // instead of only activating the window.
         .accept_first_mouse(true);
     if let Some((pos, scale)) = widget_position(saved, &screens, primary) {
-        // The builder takes logical pixels; dividing by the chosen screen's scale makes
-        // Windows (which converts with the DPI of the screen the point falls on) land on
-        // the same physical pixel.
-        builder = builder.position(pos.x as f64 / scale, pos.y as f64 / scale);
+        let (x, y) = to_logical(pos, scale);
+        builder = builder.position(x, y);
     }
     builder.build()?;
     Ok(())
+}
+
+/// The builder takes logical pixels. Dividing by the chosen screen's scale, unrounded, makes
+/// the platform's conversion back (`logical × scale`, rounded to the nearest pixel, with the
+/// DPI of the screen the point falls on on Windows) land on the same physical pixel, so a
+/// saved position never creeps at 125 % / 150 % / 175 %.
+fn to_logical(pos: PhysicalPosition<i32>, scale: f64) -> (f64, f64) {
+    (pos.x as f64 / scale, pos.y as f64 / scale)
 }
 
 /// `widget_visible` for the stored settings (resolving the platform default).
@@ -490,6 +496,23 @@ mod tests {
         },
         scale: 1.0,
     };
+
+    #[test]
+    fn widget_position_round_trips_at_fractional_scales() {
+        use tauri::LogicalPosition;
+        for scale in [1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.25, 3.0] {
+            for p in (-4000..=4000).step_by(7) {
+                let pos = PhysicalPosition::new(p, p + 3);
+                let (x, y) = to_logical(pos, scale);
+                // The conversion Tauri / tao apply to a logical builder position.
+                let back: PhysicalPosition<i32> = LogicalPosition::new(x, y).to_physical(scale);
+                assert_eq!(back, pos, "scale {scale}");
+                // Restart after restart (saved → logical → physical → saved) stays put.
+                let (x2, y2) = to_logical(back, scale);
+                assert_eq!((x2, y2), (x, y));
+            }
+        }
+    }
 
     #[test]
     fn widget_without_saved_position_goes_top_right_of_primary() {

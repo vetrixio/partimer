@@ -1,21 +1,24 @@
 <!--
   The floating clock (spec §3.2). The backend creates this window while it should be on
   screen and destroys it otherwise (windows::ensure_widget); here we only draw it.
-  - Time is computed locally each second from PanelState, refetched on `state-changed`.
+  - Time is computed locally each second from the timer status, refetched on `state-changed`;
+    the opacity is fetched once and again on `settings-changed`.
+  - Mouse only: the window is never focused (it must not take the focus from what the user
+    types), so there is no keyboard path.
   - Press + move more than 4 px drags the window; press + release without that toggles the panel.
   - Moves are reported (debounced) in physical pixels, the unit ensure_widget restores in.
 -->
 <script lang="ts">
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { api, onStateChanged, type PanelState } from "../lib/api";
+  import { api, onSettingsChanged, onStateChanged, type TimerStatusView } from "../lib/api";
   import { formatHm, liveSeconds } from "../lib/time";
   import { plantAwake, plantRest } from "./plant";
 
   const DRAG_THRESHOLD_PX = 4;
   const MOVE_DEBOUNCE_MS = 500;
 
-  let panel = $state<PanelState | null>(null);
+  let panel = $state<TimerStatusView | null>(null);
   let opacity = $state(0.6);
   /** `Date.now()` when `panel` arrived: the base for the per-second display. */
   let fetchedAt = $state(Date.now());
@@ -38,14 +41,14 @@
   async function refreshPanel() {
     const seq = ++panelSeq;
     try {
-      const next = await api.getPanelState();
+      const next = await api.getTimerStatus();
       if (seq < panelApplied) return;
       panelApplied = seq;
       panel = next;
       fetchedAt = Date.now();
       now = fetchedAt;
     } catch (e) {
-      console.warn("partimer: get_panel_state", e);
+      console.warn("partimer: get_timer_status", e);
     }
   }
 
@@ -59,11 +62,6 @@
     } catch (e) {
       console.warn("partimer: get_settings", e);
     }
-  }
-
-  function refresh() {
-    void refreshPanel();
-    void refreshOpacity();
   }
 
   // ---- click vs drag ----
@@ -102,17 +100,12 @@
     api.togglePanel("widget").catch((err) => console.warn("partimer: toggle panel", err));
   }
 
-  function keydown(e: KeyboardEvent) {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      togglePanel();
-    }
-  }
-
   onMount(() => {
-    refresh();
+    void refreshPanel();
+    void refreshOpacity();
     const tick = setInterval(() => (now = Date.now()), 1000);
-    const unlisten = onStateChanged(refresh);
+    const unlisten = onStateChanged(() => void refreshPanel());
+    const unsettings = onSettingsChanged(() => void refreshOpacity());
 
     let moveTimer: ReturnType<typeof setTimeout> | undefined;
     const unmoved = getCurrentWindow().onMoved(({ payload }) => {
@@ -128,6 +121,7 @@
       clearInterval(tick);
       clearTimeout(moveTimer);
       void unlisten.then((f) => f());
+      void unsettings.then((f) => f());
       void unmoved.then((f) => f());
     };
   });
@@ -137,13 +131,10 @@
   class="capsule"
   class:idle={status === "idle"}
   style:--widget-opacity={opacity}
-  role="button"
-  tabindex="-1"
-  aria-label="打工人計時器：開關打卡面板"
+  role="presentation"
   onmousedown={mousedown}
   onmousemove={mousemove}
   onmouseup={mouseup}
-  onkeydown={keydown}
   oncontextmenu={(e) => e.preventDefault()}
 >
   <span class="plant" class:awake={status === "running"} aria-hidden="true">
