@@ -279,7 +279,6 @@ STOP、START、儲存、切換專案時：
 - macOS：`~/Library/Application Support/partimer/`
 - Windows：`%APPDATA%\partimer\`
 - Ubuntu：`~/.local/share/partimer/`
-- Windows 免安裝版（2026-11-07 加入）：`partimer.exe` 旁邊有 `partimer-data` 資料夾時，改用該資料夾（WebView2 的資料也放在其中的 `webview/`）；資料夾無法寫入時面板提示。
 
 資料夾內容：
 
