@@ -6,10 +6,13 @@ on:
     branches: ['**']
   pull_request:
 
-# Keyed by branch, so a push and the pull request for the same branch share one group and
-# the older run is cancelled instead of both running.
+# A branch of this repository is tested by its push run; a pull request run is only needed
+# for a fork's branch (see the job `if`s), so the same commit is never built twice. Push
+# runs and PR runs are kept in separate groups (a PR by its number, so a fork branch named
+# `main` never cancels this repository's `main`); a newer run cancels an older one of the
+# same group.
 concurrency:
-  group: ci-${{ github.head_ref || github.ref_name }}
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -20,6 +23,7 @@ env:
 
 jobs:
   core:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,6 +49,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-15-intel, windows-latest, ubuntu-24.04]
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:

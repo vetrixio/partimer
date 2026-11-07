@@ -52,6 +52,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # The shell crate embeds ../dist, so the frontend is built before the tests.
       - run: npm ci
+      - run: npm test
       - run: npm run build
       - run: cargo test --workspace
 
