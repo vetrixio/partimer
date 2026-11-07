@@ -15,11 +15,15 @@
   /** Slider value while dragging; null when it follows the stored value. */
   let dragOpacity = $state<number | null>(null);
 
+  // Only the newest answer is shown: every refresh and every command takes a number.
+  let viewSeq = 0;
   async function refresh() {
+    const mine = ++viewSeq;
     try {
-      view = await api.getSettings();
+      const next = await api.getSettings();
+      if (mine === viewSeq) view = next;
     } catch (e) {
-      message = String(e);
+      if (mine === viewSeq) message = String(e);
     }
   }
 
@@ -29,23 +33,53 @@
     return () => void unlisten.then((f) => f());
   });
 
-  async function run(task: () => Promise<SettingsView>) {
-    busy = true;
-    message = null;
-    try {
-      view = await task();
-    } catch (e) {
-      message = String(e);
-      await refresh();
-    } finally {
-      busy = false;
-    }
+  // Commands run one after another, each built from the view the previous one left, so a
+  // slider step never sends back a checkbox value that was just changed.
+  let queue: Promise<void> = Promise.resolve();
+  function run(task: () => Promise<SettingsView>): Promise<void> {
+    const next = queue.then(async () => {
+      busy = true;
+      message = null;
+      const mine = ++viewSeq;
+      try {
+        const result = await task();
+        if (mine === viewSeq) view = result;
+      } catch (e) {
+        message = String(e);
+        await refresh();
+      } finally {
+        busy = false;
+      }
+    });
+    queue = next;
+    return next;
   }
 
   function setWidget(patch: Partial<WidgetSettings>) {
-    if (!view) return;
-    const widget = { ...view.widget, ...patch };
-    return run(() => api.setWidgetSettings(widget));
+    return run(() => {
+      if (!view) return api.getSettings();
+      return api.setWidgetSettings({ ...view.widget, ...patch });
+    });
+  }
+
+  // The slider stays usable while a change is saved: keyboard steps that arrive meanwhile are
+  // coalesced into one save of the latest value.
+  let pendingOpacity: number | null = null;
+  let sendingOpacity = false;
+  async function setOpacity(value: number) {
+    pendingOpacity = value;
+    if (sendingOpacity) return;
+    sendingOpacity = true;
+    try {
+      while (pendingOpacity !== null) {
+        const next = pendingOpacity;
+        pendingOpacity = null;
+        await setWidget({ opacity: next });
+      }
+    } finally {
+      sendingOpacity = false;
+      dragOpacity = null;
+    }
   }
 
   async function openFolder() {
@@ -112,13 +146,9 @@
           min="0.4"
           max="1"
           step="0.05"
-          value={view.widget.opacity}
-          disabled={busy}
+          value={dragOpacity ?? view.widget.opacity}
           oninput={(e) => (dragOpacity = Number(e.currentTarget.value))}
-          onchange={async (e) => {
-            await setWidget({ opacity: Number(e.currentTarget.value) });
-            dragOpacity = null;
-          }}
+          onchange={(e) => void setOpacity(Number(e.currentTarget.value))}
         />
         <span class="pct">{Math.round((dragOpacity ?? view.widget.opacity) * 100)}%</span>
       </label>

@@ -22,6 +22,7 @@
       const c = await api.getCatalog();
       if (mine !== seq) return;
       catalog = c;
+      globalError = null;
       // Drop drafts for rows that no longer exist or already equal the stored name.
       const names = new Map<Id, string>();
       for (const cl of c.clients) {
