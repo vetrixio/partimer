@@ -24,6 +24,12 @@ pub struct MemFs {
     pub fail_renames: std::cell::Cell<bool>,
     /// Reads of this path fail with `PermissionDenied`.
     pub fail_reads_of: std::cell::RefCell<Option<std::path::PathBuf>>,
+    /// When true, only `write_sync` fails (with `StorageFull`).
+    pub fail_write_syncs: std::cell::Cell<bool>,
+    /// When true, `list` fails with `PermissionDenied`.
+    pub fail_lists: std::cell::Cell<bool>,
+    /// When true, `exists` answers "maybe" (like `RealFs` on a permission error): true.
+    pub exists_unknown: std::cell::Cell<bool>,
 }
 
 impl MemFs {
@@ -63,6 +69,9 @@ impl crate::storage::Fs for MemFs {
 
     fn write_sync(&self, p: &std::path::Path, b: &[u8]) -> std::io::Result<()> {
         self.check_write()?;
+        if self.fail_write_syncs.get() {
+            return Err(std::io::ErrorKind::StorageFull.into());
+        }
         self.put(p, b);
         Ok(())
     }
@@ -92,7 +101,7 @@ impl crate::storage::Fs for MemFs {
     }
 
     fn exists(&self, p: &std::path::Path) -> bool {
-        self.files.borrow().contains_key(p)
+        self.exists_unknown.get() || self.files.borrow().contains_key(p)
     }
 
     fn create_dir_all(&self, _p: &std::path::Path) -> std::io::Result<()> {
@@ -100,6 +109,9 @@ impl crate::storage::Fs for MemFs {
     }
 
     fn list(&self, dir: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
+        if self.fail_lists.get() {
+            return Err(std::io::ErrorKind::PermissionDenied.into());
+        }
         Ok(self
             .files
             .borrow()

@@ -16,6 +16,8 @@ pub trait Fs {
     /// Must replace an existing destination (also on Windows).
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
     fn copy(&self, from: &Path, to: &Path) -> io::Result<()>;
+    /// True when the path exists *or cannot be checked*: callers use it to avoid replacing a
+    /// file, so "unknown" must never read as "free".
     fn exists(&self, p: &Path) -> bool;
     fn create_dir_all(&self, p: &Path) -> io::Result<()>;
     /// Direct children only; a missing directory yields an empty list.
@@ -25,6 +27,11 @@ pub trait Fs {
 }
 
 pub struct RealFs;
+
+/// A failed existence check (e.g. permission denied) counts as "exists".
+fn exists_or_unknown(r: io::Result<bool>) -> bool {
+    r.unwrap_or(true)
+}
 
 impl Fs for RealFs {
     fn read(&self, p: &Path) -> io::Result<Vec<u8>> {
@@ -38,7 +45,16 @@ impl Fs for RealFs {
     }
 
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
-        std::fs::rename(from, to)
+        std::fs::rename(from, to)?;
+        // Make the rename itself durable (best effort; directories cannot be opened like
+        // this on Windows, where the rename is already durable enough).
+        #[cfg(unix)]
+        if let Some(dir) = to.parent()
+            && let Ok(d) = std::fs::File::open(dir)
+        {
+            let _ = d.sync_all();
+        }
+        Ok(())
     }
 
     fn copy(&self, from: &Path, to: &Path) -> io::Result<()> {
@@ -46,7 +62,7 @@ impl Fs for RealFs {
     }
 
     fn exists(&self, p: &Path) -> bool {
-        p.exists()
+        exists_or_unknown(p.try_exists())
     }
 
     fn create_dir_all(&self, p: &Path) -> io::Result<()> {
@@ -112,11 +128,18 @@ pub fn default_dir() -> Option<PathBuf> {
     Some(dirs::data_dir()?.join("partimer"))
 }
 
-/// Write tmp (fsync) then replace `data.json`. The old file stays intact on any failure.
+/// Write tmp (fsync) then replace `data.json`. The old file stays intact on any failure, and
+/// no tmp file is left behind.
 pub fn save_atomic(fs: &dyn Fs, paths: &Paths, data: &Data) -> io::Result<()> {
     fs.create_dir_all(&paths.dir)?;
-    fs.write_sync(&paths.tmp(), &to_json(data))?;
-    fs.rename(&paths.tmp(), &paths.data())
+    let tmp = paths.tmp();
+    let result = fs
+        .write_sync(&tmp, &to_json(data))
+        .and_then(|_| fs.rename(&tmp, &paths.data()));
+    if result.is_err() {
+        let _ = fs.remove(&tmp);
+    }
+    result
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -132,8 +155,10 @@ pub enum LoadNotice {
         corrupt_path: PathBuf,
     },
     /// `data.json` exists but could not be read or moved aside (e.g. permission
-    /// denied). It was left untouched; saving must stay blocked.
+    /// denied). It was left untouched; saving must stay blocked. `error` is the raw
+    /// io error; the UI wording is the caller's.
     Unreadable {
+        reason: UnreadableReason,
         error: String,
         backup_date: Option<NaiveDate>,
     },
@@ -144,6 +169,14 @@ pub enum LoadNotice {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnreadableReason {
+    /// Reading `data.json` failed.
+    ReadFailed,
+    /// `data.json` is corrupt and could not be renamed aside (or no free name was certain).
+    CannotKeepCorrupt,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Loaded {
     pub data: Data,
@@ -151,6 +184,30 @@ pub struct Loaded {
     pub write_back_error: Option<String>,
     /// True when the data file is unreadable or from a newer version: the caller must not save.
     pub save_blocked: bool,
+    /// The backups folder was needed but could not be listed (raw io error).
+    pub backup_error: Option<String>,
+}
+
+impl Loaded {
+    fn new(data: Data) -> Self {
+        Loaded {
+            data,
+            notice: None,
+            write_back_error: None,
+            save_blocked: false,
+            backup_error: None,
+        }
+    }
+
+    fn notice(mut self, notice: LoadNotice) -> Self {
+        self.notice = Some(notice);
+        self
+    }
+
+    fn blocked(mut self) -> Self {
+        self.save_blocked = true;
+        self
+    }
 }
 
 /// Data from a newer app version must be shown read-only and never written back.
@@ -168,23 +225,31 @@ fn backup_date_of(path: &Path) -> Option<NaiveDate> {
     (parsed.format("%Y-%m-%d").to_string() == date).then_some(parsed)
 }
 
-/// Backups named exactly `data-YYYY-MM-DD.json`, newest first.
-fn list_backups(fs: &dyn Fs, paths: &Paths) -> Vec<(NaiveDate, PathBuf)> {
+/// Backups named exactly `data-YYYY-MM-DD.json`, newest first. A missing folder is empty.
+fn list_backups(fs: &dyn Fs, paths: &Paths) -> io::Result<Vec<(NaiveDate, PathBuf)>> {
     let mut v: Vec<_> = fs
-        .list(&paths.backups())
-        .unwrap_or_default()
+        .list(&paths.backups())?
         .into_iter()
         .filter_map(|p| backup_date_of(&p).map(|d| (d, p)))
         .collect();
     v.sort_by_key(|(d, _)| std::cmp::Reverse(*d));
-    v
+    Ok(v)
 }
 
-fn newest_good_backup(fs: &dyn Fs, paths: &Paths) -> Option<(NaiveDate, Data)> {
-    list_backups(fs, paths).into_iter().find_map(|(d, p)| {
+/// Newest readable backup dated up to `today`; one dated later (the clock was ahead when it
+/// was taken) is used only when nothing else is readable.
+fn newest_good_backup(
+    fs: &dyn Fs,
+    paths: &Paths,
+    today: NaiveDate,
+) -> io::Result<Option<(NaiveDate, Data)>> {
+    let (past, future): (Vec<_>, Vec<_>) = list_backups(fs, paths)?
+        .into_iter()
+        .partition(|(d, _)| *d <= today);
+    Ok(past.into_iter().chain(future).find_map(|(d, p)| {
         let data = parse_data(&fs.read(&p).ok()?).ok()?;
         Some((d, data))
-    })
+    }))
 }
 
 fn split_backup(b: Option<(NaiveDate, Data)>) -> (Data, Option<NaiveDate>) {
@@ -194,92 +259,98 @@ fn split_backup(b: Option<(NaiveDate, Data)>) -> (Data, Option<NaiveDate>) {
     }
 }
 
+/// How many `-N` suffixes to try before giving up on finding a certainly free name.
+const CORRUPT_NAME_TRIES: u32 = 100;
+
+/// A corrupt-file name that certainly does not exist yet, or `None` (e.g. existence cannot
+/// be checked): the rename would then risk replacing an older corrupt file.
 fn unique_corrupt_path(
     fs: &dyn Fs,
     paths: &Paths,
     zone: &dyn LocalZone,
     now: DateTime<Utc>,
-) -> PathBuf {
+) -> Option<PathBuf> {
     let stamp = zone.to_local(now).format("%Y%m%d-%H%M%S").to_string();
-    let mut candidate = paths.corrupt(&stamp);
-    let mut n = 1;
-    while fs.exists(&candidate) {
-        candidate = paths.corrupt(&format!("{stamp}-{n}"));
-        n += 1;
-    }
-    candidate
+    std::iter::once(paths.corrupt(&stamp))
+        .chain((1..=CORRUPT_NAME_TRIES).map(|n| paths.corrupt(&format!("{stamp}-{n}"))))
+        .find(|candidate| !fs.exists(candidate))
 }
 
 /// Load `data.json`, recovering from corruption or loss using backups.
 /// Never panics and never overwrites or deletes the original data file.
 pub fn load(fs: &dyn Fs, paths: &Paths, zone: &dyn LocalZone, now: DateTime<Utc>) -> Loaded {
-    let done = |data, notice, write_back_error, save_blocked| Loaded {
-        data,
-        notice,
-        write_back_error,
-        save_blocked,
+    let today = crate::zone::local_date(zone, now);
+    // Backups are only looked at when needed; a listing error is reported, not swallowed.
+    let mut backup_error = None;
+    let mut backup = || match newest_good_backup(fs, paths, today) {
+        Ok(b) => b,
+        Err(e) => {
+            backup_error = Some(e.to_string());
+            None
+        }
     };
-    let write_back = |data: &Data| save_atomic(fs, paths, data).err().map(|e| e.to_string());
+    let restored = |data: Data, notice: LoadNotice| {
+        if let Some(newer) = newer_version(&data) {
+            return Loaded::new(data).notice(newer).blocked();
+        }
+        let write_back_error = save_atomic(fs, paths, &data).err().map(|e| e.to_string());
+        Loaded {
+            write_back_error,
+            ..Loaded::new(data).notice(notice)
+        }
+    };
+    let unreadable = |b: Option<(NaiveDate, Data)>, reason, error: String| {
+        let (data, backup_date) = split_backup(b);
+        let notice = LoadNotice::Unreadable {
+            reason,
+            error,
+            backup_date,
+        };
+        Loaded::new(data).notice(notice).blocked()
+    };
 
-    match fs.read(&paths.data()) {
+    let loaded = match fs.read(&paths.data()) {
         Ok(bytes) => match parse_data(&bytes) {
             Ok(data) => match newer_version(&data) {
-                Some(notice) => done(data, Some(notice), None, true),
-                None => done(data, None, None, false),
+                Some(notice) => Loaded::new(data).notice(notice).blocked(),
+                None => Loaded::new(data),
             },
             Err(_) => {
-                let corrupt_path = unique_corrupt_path(fs, paths, zone, now);
-                let backup = newest_good_backup(fs, paths);
-                if let Err(e) = fs.rename(&paths.data(), &corrupt_path) {
-                    // The bad file cannot be moved aside: leave it alone and block saving,
-                    // since a later save would replace it.
-                    let (data, backup_date) = split_backup(backup);
-                    let notice = LoadNotice::Unreadable {
-                        error: format!("無法保留損壞的資料檔：{e}"),
-                        backup_date,
-                    };
-                    return done(data, Some(notice), None, true);
-                }
-                match backup {
-                    Some((backup_date, data)) => {
-                        if let Some(notice) = newer_version(&data) {
-                            return done(data, Some(notice), None, true);
-                        }
-                        let err = write_back(&data);
-                        let notice = LoadNotice::RestoredCorrupt {
+                let b = backup();
+                // The bad file cannot be moved aside: leave it alone and block saving, since
+                // a later save would replace it.
+                let moved = unique_corrupt_path(fs, paths, zone, now)
+                    .ok_or_else(|| "no free name for the corrupt file".to_string())
+                    .and_then(|to| {
+                        fs.rename(&paths.data(), &to)
+                            .map(|_| to)
+                            .map_err(|e| e.to_string())
+                    });
+                match (moved, b) {
+                    (Err(e), b) => unreadable(b, UnreadableReason::CannotKeepCorrupt, e),
+                    (Ok(corrupt_path), Some((backup_date, data))) => restored(
+                        data,
+                        LoadNotice::RestoredCorrupt {
                             backup_date,
                             corrupt_path,
-                        };
-                        done(data, Some(notice), err, false)
-                    }
-                    None => done(
-                        Data::default(),
-                        Some(LoadNotice::CorruptNoBackup { corrupt_path }),
-                        None,
-                        false,
+                        },
                     ),
+                    (Ok(corrupt_path), None) => Loaded::new(Data::default())
+                        .notice(LoadNotice::CorruptNoBackup { corrupt_path }),
                 }
             }
         },
-        Err(e) if e.kind() == io::ErrorKind::NotFound => match newest_good_backup(fs, paths) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => match backup() {
             Some((backup_date, data)) => {
-                if let Some(notice) = newer_version(&data) {
-                    return done(data, Some(notice), None, true);
-                }
-                let err = write_back(&data);
-                let notice = LoadNotice::RestoredMissing { backup_date };
-                done(data, Some(notice), err, false)
+                restored(data, LoadNotice::RestoredMissing { backup_date })
             }
-            None => done(Data::default(), None, None, false),
+            None => Loaded::new(Data::default()),
         },
-        Err(e) => {
-            let (data, backup_date) = split_backup(newest_good_backup(fs, paths));
-            let notice = LoadNotice::Unreadable {
-                error: e.to_string(),
-                backup_date,
-            };
-            done(data, Some(notice), None, true)
-        }
+        Err(e) => unreadable(backup(), UnreadableReason::ReadFailed, e.to_string()),
+    };
+    Loaded {
+        backup_error,
+        ..loaded
     }
 }
 
@@ -310,9 +381,12 @@ pub fn ensure_daily_backup(fs: &dyn Fs, paths: &Paths, date: NaiveDate) -> io::R
         let _ = fs.remove(&tmp);
         return Err(e);
     }
-    // Pruning is best effort: the backup itself already succeeded.
-    for (_, p) in list_backups(fs, paths).into_iter().skip(BACKUP_KEEP) {
-        let _ = fs.remove(&p);
+    // Pruning is best effort: the backup itself already succeeded, and a listing error
+    // only means the old backups are kept until the next day.
+    if let Ok(list) = list_backups(fs, paths) {
+        for (_, p) in list.into_iter().skip(BACKUP_KEEP) {
+            let _ = fs.remove(&p);
+        }
     }
     Ok(true)
 }
@@ -628,7 +702,7 @@ mod tests {
             let day = start + chrono::Days::new(i);
             assert!(ensure_daily_backup(&fs, &paths(), day).unwrap());
         }
-        let backups = list_backups(&fs, &paths());
+        let backups = list_backups(&fs, &paths()).unwrap();
         assert_eq!(backups.len(), BACKUP_KEEP);
         assert_eq!(backups[0].0, start + chrono::Days::new(34));
         assert_eq!(backups[29].0, start + chrono::Days::new(5));
@@ -704,5 +778,141 @@ mod tests {
         fs.fail_renames.set(true);
         assert!(save_atomic(&fs, &paths(), &sample()).is_err());
         assert_eq!(fs.get(&paths().data()).unwrap(), GOOD_B.as_bytes());
+        assert!(
+            !fs.exists(&paths().tmp()),
+            "tmp removed after a failed rename"
+        );
+    }
+
+    #[test]
+    fn backup_folder_list_error_is_reported() {
+        let fs = MemFs::new();
+        fs.put(paths().backup_for(d(10, 5)), GOOD_A.as_bytes());
+        fs.fail_lists.set(true);
+        let l = run_load(&fs);
+        assert_eq!(l.data, Data::default());
+        let io = io::Error::from(io::ErrorKind::PermissionDenied).to_string();
+        assert_eq!(l.backup_error, Some(io));
+        // Reading data.json fine never looks at the backups.
+        let fs = MemFs::new();
+        fs.put(paths().data(), GOOD_A.as_bytes());
+        fs.fail_lists.set(true);
+        assert_eq!(run_load(&fs).backup_error, None);
+    }
+
+    #[test]
+    fn future_dated_backup_does_not_win() {
+        // now = 2026-10-07 local; a backup "from December" comes from a clock jump.
+        let fs = MemFs::new();
+        fs.put(paths().backup_for(d(10, 5)), GOOD_A.as_bytes());
+        fs.put(paths().backup_for(d(12, 1)), GOOD_B.as_bytes());
+        let l = run_load(&fs);
+        assert_eq!(l.data, sample());
+        assert_eq!(
+            l.notice,
+            Some(LoadNotice::RestoredMissing {
+                backup_date: d(10, 5)
+            })
+        );
+    }
+
+    #[test]
+    fn only_future_dated_backup_is_still_used() {
+        let fs = MemFs::new();
+        fs.put(paths().backup_for(d(12, 1)), GOOD_A.as_bytes());
+        let l = run_load(&fs);
+        assert_eq!(l.data, sample());
+        assert_eq!(
+            l.notice,
+            Some(LoadNotice::RestoredMissing {
+                backup_date: d(12, 1)
+            })
+        );
+    }
+
+    #[test]
+    fn corrupt_file_stays_when_no_free_name_can_be_confirmed() {
+        let fs = MemFs::new();
+        fs.put(paths().data(), b"{broken");
+        fs.put(paths().backup_for(d(10, 5)), GOOD_A.as_bytes());
+        fs.exists_unknown.set(true);
+        let l = run_load(&fs);
+        assert_eq!(l.data, sample());
+        assert!(l.save_blocked);
+        assert!(matches!(
+            l.notice,
+            Some(LoadNotice::Unreadable {
+                reason: UnreadableReason::CannotKeepCorrupt,
+                backup_date: Some(_),
+                ..
+            })
+        ));
+        assert_eq!(fs.get(&paths().data()).unwrap(), b"{broken");
+        assert!(
+            fs.names()
+                .iter()
+                .all(|p| !p.to_string_lossy().contains("corrupt"))
+        );
+    }
+
+    #[test]
+    fn unreadable_error_is_the_raw_io_error() {
+        let fs = MemFs::new();
+        fs.put(paths().data(), GOOD_B.as_bytes());
+        *fs.fail_reads_of.borrow_mut() = Some(paths().data());
+        let io = io::Error::from(io::ErrorKind::PermissionDenied).to_string();
+        assert_eq!(
+            run_load(&fs).notice,
+            Some(LoadNotice::Unreadable {
+                reason: UnreadableReason::ReadFailed,
+                error: io,
+                backup_date: None,
+            })
+        );
+        let fs = MemFs::new();
+        fs.put(paths().data(), b"{broken");
+        fs.fail_renames.set(true);
+        let storage_full = io::Error::from(io::ErrorKind::StorageFull).to_string();
+        assert_eq!(
+            run_load(&fs).notice,
+            Some(LoadNotice::Unreadable {
+                reason: UnreadableReason::CannotKeepCorrupt,
+                error: storage_full,
+                backup_date: None,
+            })
+        );
+    }
+
+    #[test]
+    fn exists_errors_count_as_existing() {
+        assert!(exists_or_unknown(Ok(true)));
+        assert!(!exists_or_unknown(Ok(false)));
+        assert!(exists_or_unknown(Err(
+            io::ErrorKind::PermissionDenied.into()
+        )));
+    }
+
+    #[test]
+    fn corrupt_restore_write_back_failure_is_reported() {
+        let fs = MemFs::new();
+        fs.put(paths().data(), b"{broken");
+        fs.put(paths().backup_for(d(10, 5)), GOOD_A.as_bytes());
+        fs.fail_write_syncs.set(true);
+        let l = run_load(&fs);
+        let corrupt = paths().corrupt("20261007-090203");
+        assert_eq!(l.data, sample());
+        assert_eq!(
+            l.notice,
+            Some(LoadNotice::RestoredCorrupt {
+                backup_date: d(10, 5),
+                corrupt_path: corrupt.clone()
+            })
+        );
+        let storage_full = io::Error::from(io::ErrorKind::StorageFull).to_string();
+        assert_eq!(l.write_back_error, Some(storage_full));
+        assert!(!l.save_blocked);
+        assert_eq!(fs.get(&corrupt).unwrap(), b"{broken");
+        assert!(!fs.exists(&paths().data()));
+        assert!(!fs.exists(&paths().tmp()));
     }
 }

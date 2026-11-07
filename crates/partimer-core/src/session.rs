@@ -11,7 +11,7 @@ use crate::duration::{effective_seconds, format_hm, hours_decimal, round_minutes
 use crate::edit::{self, EntryPatch};
 use crate::model::{Data, Entry, Id, Settings};
 use crate::report::{self, Filter};
-use crate::storage::{self, Fs, LoadNotice, Paths};
+use crate::storage::{self, Fs, LoadNotice, Paths, UnreadableReason};
 use crate::timer::{self, TimerError};
 use crate::views::*;
 use crate::zone::{LocalZone, format_hhmm, format_local_input, local_date, parse_local_input};
@@ -133,6 +133,18 @@ impl<F: Fs> Session<F> {
         }
         if let Some(n) = loaded.notice {
             s.report_load_notice(n, now);
+        }
+        if let Some(e) = loaded.backup_error {
+            s.log(
+                now,
+                Action::Restore,
+                None,
+                Some(&format!("backups unreadable: {e}")),
+            );
+            s.push_notice(
+                NoticeKind::Info,
+                format!("無法讀取備份資料夾（{e}），這次沒辦法從備份還原。"),
+            );
         }
         s.report_quarantined(now);
         s.repair_multiple_running(now);
@@ -1057,11 +1069,24 @@ impl<F: Fs> Session<F> {
                     file_name(&corrupt_path)
                 ),
             ),
-            LoadNotice::Unreadable { error, backup_date } => {
+            LoadNotice::Unreadable {
+                reason,
+                error,
+                backup_date,
+            } => {
+                let (what, mut note) = match reason {
+                    UnreadableReason::ReadFailed => (
+                        "資料檔無法讀取",
+                        format!("data file unreadable ({error}), saving blocked"),
+                    ),
+                    UnreadableReason::CannotKeepCorrupt => (
+                        "資料檔損壞，且無法改名保留",
+                        format!("corrupt data file cannot be kept ({error}), saving blocked"),
+                    ),
+                };
                 let mut message = format!(
-                    "資料檔無法讀取（{error}），為避免覆蓋原檔，這次開啟期間的變更不會存檔。請檢查檔案權限後重開 app。"
+                    "{what}（{error}），為避免覆蓋原檔，這次開啟期間的變更不會存檔。請檢查檔案權限後重開 app。"
                 );
-                let mut note = "data file unreadable, saving blocked".to_string();
                 if let Some(d) = backup_date {
                     message.push_str(&format!("已暫時顯示 {} 的備份內容。", ymd(d)));
                     note.push_str(&format!("; showing backup {}", ymd(d)));

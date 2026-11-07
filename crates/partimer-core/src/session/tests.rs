@@ -1351,3 +1351,38 @@ fn save_entry_rejects_future_end_from_form() {
     s.save_entry(None, form, now).unwrap();
     assert_eq!(on_disk(&s).entries.len(), 3);
 }
+
+#[test]
+fn backup_folder_error_is_shown_and_logged() {
+    let fs = MemFs::new();
+    fs.put(
+        paths().backups().join("data-2026-10-05.json"),
+        &to_json(&base_data()),
+    );
+    fs.fail_lists.set(true);
+    let s = open(fs, at(0));
+    let io = std::io::Error::from(std::io::ErrorKind::PermissionDenied).to_string();
+    let n = notice(&s, NoticeKind::Info).expect("info notice");
+    assert_eq!(
+        n.message,
+        format!("無法讀取備份資料夾（{io}），這次沒辦法從備份還原。")
+    );
+    assert!(log_text(&s).contains("backups unreadable"));
+}
+
+#[test]
+fn corrupt_file_that_cannot_be_kept_names_the_reason() {
+    let fs = MemFs::new();
+    fs.put(paths().data(), b"{broken");
+    fs.fail_renames.set(true);
+    let s = open(fs, at(0));
+    let io = std::io::Error::from(std::io::ErrorKind::StorageFull).to_string();
+    let n = notice(&s, NoticeKind::Unreadable).expect("unreadable notice");
+    assert_eq!(
+        n.message,
+        format!(
+            "資料檔損壞，且無法改名保留（{io}），為避免覆蓋原檔，這次開啟期間的變更不會存檔。請檢查檔案權限後重開 app。"
+        )
+    );
+    assert_eq!(s.fs.get(&paths().data()).unwrap(), b"{broken");
+}
