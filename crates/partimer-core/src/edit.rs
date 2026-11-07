@@ -145,6 +145,7 @@ pub fn add_entry(data: &mut Data, patch: EntryPatch, now: DateTime<Utc>) -> Resu
     let (end, paused_seconds) = check_finished(&patch, now)?;
     let id = new_id();
     data.entries.push(Entry {
+        extra: Default::default(),
         id: id.clone(),
         project_id: patch.project_id,
         start: patch.start,
@@ -175,12 +176,14 @@ mod tests {
     fn data() -> Data {
         let mut d = Data::default();
         d.clients.push(Client {
+            extra: Default::default(),
             id: "c1".into(),
             name: "客戶".into(),
             archived: false,
         });
         for (id, archived) in [("p1", false), ("p2", true)] {
             d.projects.push(Project {
+                extra: Default::default(),
                 id: id.into(),
                 client_id: "c1".into(),
                 name: id.into(),
@@ -197,6 +200,7 @@ mod tests {
 
     fn entry(id: &str, start: &str, end: Option<&str>) -> Entry {
         Entry {
+            extra: Default::default(),
             id: id.into(),
             project_id: "p1".into(),
             start: utc(start),

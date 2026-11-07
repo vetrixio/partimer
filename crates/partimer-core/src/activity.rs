@@ -102,6 +102,7 @@ mod tests {
 
     fn entry(title: &str, content: &str, end: Option<&str>) -> Entry {
         Entry {
+            extra: Default::default(),
             id: "abcdef12-3456-7890-abcd-ef1234567890".into(),
             project_id: "p".into(),
             start: utc("2026-11-06T04:00:00Z"),

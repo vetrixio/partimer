@@ -33,6 +33,7 @@ fn open(fs: MemFs, now: DateTime<Utc>) -> Session<MemFs> {
 
 fn entry(id: &str, project: &str, start: &str, end: Option<&str>, title: &str) -> Entry {
     Entry {
+        extra: Default::default(),
         id: id.into(),
         project_id: project.into(),
         start: utc(start),
@@ -48,12 +49,14 @@ fn entry(id: &str, project: &str, start: &str, end: Option<&str>, title: &str) -
 fn base_data() -> Data {
     let mut d = Data::default();
     d.clients.push(Client {
+        extra: Default::default(),
         id: "c1".into(),
         name: "王小明".into(),
         archived: false,
     });
     for (id, name, color) in [("p1", "官網改版", 0), ("p2", "設計", 1)] {
         d.projects.push(Project {
+            extra: Default::default(),
             id: id.into(),
             client_id: "c1".into(),
             name: name.into(),

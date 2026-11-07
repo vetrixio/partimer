@@ -44,6 +44,7 @@ pub fn start(
     }
     let id = new_id();
     data.entries.push(Entry {
+        extra: Default::default(),
         id: id.clone(),
         project_id: project_id.to_string(),
         start: now,
@@ -128,6 +129,7 @@ mod tests {
     fn data_with_project() -> Data {
         let mut d = Data::default();
         d.projects.push(Project {
+            extra: Default::default(),
             id: "p1".into(),
             client_id: "c1".into(),
             name: "P".into(),
@@ -135,6 +137,7 @@ mod tests {
             archived: false,
         });
         d.projects.push(Project {
+            extra: Default::default(),
             id: "p2".into(),
             client_id: "c1".into(),
             name: "Q".into(),
@@ -336,6 +339,7 @@ mod tests {
     fn last_title_uses_latest_start() {
         let mut d = data_with_project();
         let mk = |id: &str, p: &str, start: &str, title: &str| Entry {
+            extra: Default::default(),
             id: id.into(),
             project_id: p.into(),
             start: utc(start),

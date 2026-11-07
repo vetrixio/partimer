@@ -351,6 +351,7 @@ fn merge_widget(stored: &WidgetSettings, incoming: WidgetSettings) -> WidgetSett
         show_when_idle: incoming.show_when_idle,
         x: stored.x,
         y: stored.y,
+        extra: stored.extra.clone(),
     }
 }
 
@@ -517,6 +518,7 @@ mod tests {
             show_when_idle: true,
             x: Some(5),
             y: None,
+            extra: Default::default(),
         };
         let merged = merge_widget(&stored, incoming);
         assert_eq!(merged.enabled, Some(true));

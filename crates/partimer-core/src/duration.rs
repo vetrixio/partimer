@@ -40,6 +40,7 @@ mod tests {
 
     fn entry(start: &str, end: Option<&str>, paused: i64, pause_at: Option<&str>) -> Entry {
         Entry {
+            extra: Default::default(),
             id: "e".into(),
             project_id: "p".into(),
             start: utc(start),

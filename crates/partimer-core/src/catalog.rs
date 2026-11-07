@@ -77,6 +77,7 @@ pub fn add_project(
         None => {
             let id = new_id();
             data.clients.push(Client {
+                extra: Default::default(),
                 id: id.clone(),
                 name: client_name.to_string(),
                 archived: false,
@@ -86,6 +87,7 @@ pub fn add_project(
     };
     let id = new_id();
     data.projects.push(Project {
+        extra: Default::default(),
         id: id.clone(),
         client_id,
         name: project_name.to_string(),
@@ -279,6 +281,7 @@ mod tests {
 
     fn entry(project_id: &str, start: &str, end: Option<&str>) -> Entry {
         Entry {
+            extra: Default::default(),
             id: new_id(),
             project_id: project_id.to_string(),
             start: utc(start),

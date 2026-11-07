@@ -10,6 +10,10 @@ pub fn new_id() -> Id {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// Keys this version does not know (e.g. written by a newer minor version), kept verbatim so
+/// a save does not drop them.
+pub type Extra = Map<String, Value>;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Client {
@@ -17,6 +21,8 @@ pub struct Client {
     pub name: String,
     #[serde(default)]
     pub archived: bool,
+    #[serde(flatten)]
+    pub extra: Extra,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -29,6 +35,8 @@ pub struct Project {
     pub color: u8,
     #[serde(default)]
     pub archived: bool,
+    #[serde(flatten)]
+    pub extra: Extra,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -47,6 +55,8 @@ pub struct Entry {
     pub paused_seconds: i64,
     #[serde(default)]
     pub pause_started_at: Option<DateTime<Utc>>,
+    #[serde(flatten)]
+    pub extra: Extra,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,6 +68,8 @@ pub struct WidgetSettings {
     pub show_when_idle: bool,
     pub x: Option<i32>,
     pub y: Option<i32>,
+    #[serde(flatten)]
+    pub extra: Extra,
 }
 
 impl Default for WidgetSettings {
@@ -68,6 +80,7 @@ impl Default for WidgetSettings {
             show_when_idle: false,
             x: None,
             y: None,
+            extra: Extra::new(),
         }
     }
 }
@@ -78,6 +91,8 @@ pub struct Settings {
     pub last_project_id: Option<Id>,
     pub widget: WidgetSettings,
     pub hourly_reminder: bool,
+    #[serde(flatten)]
+    pub extra: Extra,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -92,6 +107,8 @@ pub struct Data {
     pub quarantined_projects: Vec<Value>,
     pub quarantined_entries: Vec<Value>,
     pub settings: Settings,
+    #[serde(flatten)]
+    pub extra: Extra,
 }
 
 impl Default for Data {
@@ -105,6 +122,7 @@ impl Default for Data {
             quarantined_projects: Vec::new(),
             quarantined_entries: Vec::new(),
             settings: Settings::default(),
+            extra: Extra::new(),
         }
     }
 }
@@ -135,12 +153,51 @@ fn parse_or_quarantine<T: serde::de::DeserializeOwned>(
 ) -> Vec<T> {
     let mut ok = Vec::new();
     for raw in items {
-        match serde_json::from_value::<T>(raw.clone()) {
+        match T::deserialize(&raw) {
             Ok(v) => ok.push(v),
             Err(_) => quarantine.push(raw),
         }
     }
     ok
+}
+
+/// `obj[key]` if present and of the right type; a bad value is dropped (falls back to the
+/// caller's default) rather than kept, so it never clashes with the field on save.
+fn take_field<T: serde::de::DeserializeOwned>(
+    obj: &mut Map<String, Value>,
+    key: &str,
+) -> Option<T> {
+    obj.remove(key).and_then(|v| T::deserialize(&v).ok())
+}
+
+/// Field by field: one bad value resets only itself.
+fn parse_widget(v: Value) -> WidgetSettings {
+    let d = WidgetSettings::default();
+    let Value::Object(mut o) = v else {
+        return d;
+    };
+    WidgetSettings {
+        enabled: take_field(&mut o, "enabled").unwrap_or(d.enabled),
+        opacity: take_field(&mut o, "opacity").unwrap_or(d.opacity),
+        show_when_idle: take_field(&mut o, "showWhenIdle").unwrap_or(d.show_when_idle),
+        x: take_field(&mut o, "x").unwrap_or(d.x),
+        y: take_field(&mut o, "y").unwrap_or(d.y),
+        extra: o,
+    }
+}
+
+/// Field by field: one bad value resets only itself (e.g. never `lastProjectId` because of
+/// a bad widget value).
+fn parse_settings(v: Value) -> Settings {
+    let Value::Object(mut o) = v else {
+        return Settings::default();
+    };
+    Settings {
+        last_project_id: take_field(&mut o, "lastProjectId").unwrap_or_default(),
+        widget: o.remove("widget").map(parse_widget).unwrap_or_default(),
+        hourly_reminder: take_field(&mut o, "hourlyReminder").unwrap_or_default(),
+        extra: o,
+    }
 }
 
 /// Lenient parser: missing optional fields get defaults, broken
@@ -152,7 +209,8 @@ pub fn parse_data(bytes: &[u8]) -> Result<Data, ParseError> {
     };
 
     let version = obj
-        .get("version")
+        .remove("version")
+        .as_ref()
         .and_then(Value::as_u64)
         // Too large for u32 is still "newer than us", never "current".
         .map(|v| u32::try_from(v).unwrap_or(u32::MAX))
@@ -168,7 +226,7 @@ pub fn parse_data(bytes: &[u8]) -> Result<Data, ParseError> {
 
     let settings = obj
         .remove("settings")
-        .and_then(|v| serde_json::from_value(v).ok())
+        .map(parse_settings)
         .unwrap_or_default();
 
     Ok(Data {
@@ -180,6 +238,8 @@ pub fn parse_data(bytes: &[u8]) -> Result<Data, ParseError> {
         quarantined_projects,
         quarantined_entries,
         settings,
+        // Whatever is left is unknown to this version.
+        extra: obj,
     })
 }
 
@@ -236,6 +296,55 @@ mod tests {
         assert_eq!(again.quarantined_projects, d.quarantined_projects);
         assert_eq!(again.clients.len(), 1);
         assert_eq!(again.projects.len(), 1);
+    }
+
+    #[test]
+    fn bad_settings_field_falls_back_alone() {
+        let d = parse_data(
+            br#"{"settings":{"lastProjectId":"p1","hourlyReminder":"yes",
+                 "widget":{"enabled":false,"opacity":"x","showWhenIdle":true,"x":10,"y":1.5}}}"#,
+        )
+        .unwrap();
+        let s = &d.settings;
+        assert_eq!(s.last_project_id.as_deref(), Some("p1"));
+        assert!(!s.hourly_reminder);
+        assert_eq!(s.widget.enabled, Some(false));
+        assert_eq!(s.widget.opacity, 0.6);
+        assert!(s.widget.show_when_idle);
+        assert_eq!(s.widget.x, Some(10));
+        assert_eq!(s.widget.y, None);
+        // A bad `widget` object as a whole only resets the widget.
+        let d = parse_data(br#"{"settings":{"lastProjectId":"p1","widget":7}}"#).unwrap();
+        assert_eq!(d.settings.last_project_id.as_deref(), Some("p1"));
+        assert_eq!(d.settings.widget, WidgetSettings::default());
+        // Not an object at all: defaults.
+        let d = parse_data(br#"{"settings":[1]}"#).unwrap();
+        assert_eq!(d.settings, Settings::default());
+    }
+
+    #[test]
+    fn unknown_keys_survive_round_trip() {
+        let json = br#"{"version":1,"futureRoot":{"a":1},
+            "clients":[{"id":"c1","name":"ok","nick":"Ming"}],
+            "projects":[{"id":"p1","clientId":"c1","name":"ok","budget":10},
+                        {"id":"p2","clientId":"c1","name":"x","color":300,"budget":1}],
+            "entries":[{"id":"e1","projectId":"p1","start":"2026-10-06T01:30:00Z","tags":["a"]}],
+            "settings":{"theme":"dark","widget":{"corner":"tr"}}}"#;
+        let d = parse_data(json).unwrap();
+        assert_eq!(d.projects.len(), 1);
+        assert_eq!(d.quarantined_projects.len(), 1);
+        let out: Value = serde_json::from_slice(&to_json(&d)).unwrap();
+        assert_eq!(out["futureRoot"], serde_json::json!({"a": 1}));
+        assert_eq!(out["clients"][0]["nick"], "Ming");
+        assert_eq!(out["projects"][0]["budget"], 10);
+        assert_eq!(out["entries"][0]["tags"], serde_json::json!(["a"]));
+        assert_eq!(out["settings"]["theme"], "dark");
+        assert_eq!(out["settings"]["widget"]["corner"], "tr");
+        assert_eq!(out["quarantinedProjects"][0]["budget"], 1);
+        assert_eq!(out["version"], 1);
+        // Known keys are not duplicated into the extras.
+        let again = parse_data(&to_json(&d)).unwrap();
+        assert_eq!(again, d);
     }
 
     #[test]

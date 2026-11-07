@@ -176,6 +176,7 @@ mod tests {
 
     fn e(id: &str, pid: &str, start: &str, end: Option<&str>) -> Entry {
         Entry {
+            extra: Default::default(),
             id: id.into(),
             project_id: pid.into(),
             start: utc(start),
@@ -191,6 +192,7 @@ mod tests {
         let mut d = Data::default();
         for (id, name) in [("c1", "王小明"), ("c2", "乙公司")] {
             d.clients.push(Client {
+                extra: Default::default(),
                 id: id.into(),
                 name: name.into(),
                 archived: false,
@@ -202,6 +204,7 @@ mod tests {
             ("p3", "c2", "App", false),
         ] {
             d.projects.push(Project {
+                extra: Default::default(),
                 id: id.into(),
                 client_id: cid.into(),
                 name: name.into(),
