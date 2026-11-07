@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.3 - 2026-11-07
+
+### 變更
+
+- Windows 免安裝版改成單一檔案 `partimer_0.1.3_windows_x64_portable.exe`，資料和安裝版一樣存在 `%APPDATA%\partimer`（不再存在 exe 旁邊的 `partimer-data` 資料夾）。從 v0.1.1／v0.1.2 免安裝版換過來時，若 `partimer-data` 裡已有資料，請先結束 app，把其中的 `data.json`、`backups`、`activity.log` 複製到 `%APPDATA%\partimer`。
+
 ## v0.1.2 - 2026-11-07
 
 ### 修正
