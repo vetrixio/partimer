@@ -303,10 +303,14 @@ fn resolve(row: &CsvRow, zone: &dyn LocalZone) -> Result<ImportRow, String> {
             ));
         }
     };
-    let span = row.minutes + row.paused_minutes;
+    let Some(span) = row.minutes.checked_add(row.paused_minutes) else {
+        return Err("分鐘數太大，檔案可能被改過".to_string());
+    };
     let mut best: Option<(i64, DateTime<Utc>, DateTime<Utc>)> = None;
-    for k in 0..=(span / 1440 + 1) {
-        let Some(day) = row.date.checked_add_signed(Duration::days(k)) else {
+    // The true end is always within a day of start + span.
+    let d = span / 1440;
+    for k in d.saturating_sub(1)..=d + 1 {
+        let Some(day) = Duration::try_days(k).and_then(|n| row.date.checked_add_signed(n)) else {
             continue;
         };
         let end_local: NaiveDateTime = day.and_time(row.end);
@@ -333,7 +337,10 @@ fn resolve(row: &CsvRow, zone: &dyn LocalZone) -> Result<ImportRow, String> {
             project: row.project.clone(),
             start,
             end,
-            paused_seconds: (row.paused_minutes * 60).min((end - start).num_seconds()),
+            paused_seconds: row
+                .paused_minutes
+                .saturating_mul(60)
+                .min((end - start).num_seconds()),
             title: row.title.clone(),
             content: row.content.clone(),
         }),
@@ -951,5 +958,23 @@ mod tests {
         let (c0, p0) = (d.clients.len(), d.projects.len());
         apply(&mut d, imp);
         assert_eq!((d.clients.len() - c0, d.projects.len() - p0), (nc, np));
+    }
+
+    #[test]
+    fn huge_minutes_is_an_error_not_a_hang() {
+        let e = prep(
+            "Asia/Taipei",
+            &["2026-10-06,A,B,09:00,10:00,999999999999999,0,0,,"],
+        )
+        .unwrap_err();
+        assert!(e.contains("檔案可能被改過"), "{e}");
+    }
+
+    #[test]
+    fn minutes_overflow_is_an_error() {
+        let m = i64::MAX;
+        let row = format!("2026-10-06,A,B,09:00,10:00,{m},0,{m},,");
+        let e = prep("Asia/Taipei", &[&row]).unwrap_err();
+        assert!(e.contains("分鐘數太大，檔案可能被改過"), "{e}");
     }
 }
