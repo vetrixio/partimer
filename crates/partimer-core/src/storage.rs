@@ -97,6 +97,13 @@ impl Fs for RealFs {
     }
 }
 
+/// Which change a pre-change snapshot is taken for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotKind {
+    Transfer,
+    Import,
+}
+
 #[derive(Debug, Clone)]
 pub struct Paths {
     pub dir: PathBuf,
@@ -123,6 +130,15 @@ impl Paths {
     /// `stamp` is `YYYYMMDD-HHMMSS` (optionally with a `-N` suffix).
     pub fn corrupt(&self, stamp: &str) -> PathBuf {
         self.dir.join(format!("data.corrupt-{stamp}.json"))
+    }
+
+    /// `stamp` is `YYYYMMDD-HHMMSS` (optionally with a `-N` suffix).
+    pub fn before(&self, kind: SnapshotKind, stamp: &str) -> PathBuf {
+        let kind = match kind {
+            SnapshotKind::Transfer => "transfer",
+            SnapshotKind::Import => "import",
+        };
+        self.dir.join(format!("data.before-{kind}-{stamp}.json"))
     }
 
     pub fn activity_log(&self) -> PathBuf {
@@ -281,17 +297,18 @@ fn split_backup(b: Option<(NaiveDate, Data)>) -> (Data, Option<NaiveDate>) {
 /// How many `-N` suffixes to try before giving up on finding a certainly free name.
 const CORRUPT_NAME_TRIES: u32 = 100;
 
-/// A corrupt-file name that certainly does not exist yet, or `None` (e.g. existence cannot
-/// be checked): the rename would then risk replacing an older corrupt file.
-fn unique_corrupt_path(
+/// A file name that certainly does not exist yet, or `None` (e.g. existence cannot be
+/// checked): writing there would then risk replacing an older file. `name_for` maps a stamp
+/// (`YYYYMMDD-HHMMSS`, optionally with a `-N` suffix) to a path.
+fn unique_stamped_path(
     fs: &dyn Fs,
-    paths: &Paths,
     zone: &dyn LocalZone,
     now: DateTime<Utc>,
+    name_for: impl Fn(&str) -> PathBuf,
 ) -> Option<PathBuf> {
     let stamp = zone.to_local(now).format("%Y%m%d-%H%M%S").to_string();
-    std::iter::once(paths.corrupt(&stamp))
-        .chain((1..=CORRUPT_NAME_TRIES).map(|n| paths.corrupt(&format!("{stamp}-{n}"))))
+    std::iter::once(name_for(&stamp))
+        .chain((1..=CORRUPT_NAME_TRIES).map(|n| name_for(&format!("{stamp}-{n}"))))
         .find(|candidate| !fs.exists(candidate))
 }
 
@@ -344,7 +361,7 @@ pub fn load(fs: &dyn Fs, paths: &Paths, zone: &dyn LocalZone, now: DateTime<Utc>
                 let b = backup();
                 // The bad file cannot be moved aside: leave it alone and block saving, since
                 // a later save would replace it.
-                let moved = unique_corrupt_path(fs, paths, zone, now)
+                let moved = unique_stamped_path(fs, zone, now, |stamp| paths.corrupt(stamp))
                     .ok_or_else(|| "no free name for the corrupt file".to_string())
                     .and_then(|to| {
                         fs.rename(&paths.data(), &to)
@@ -425,6 +442,21 @@ pub fn ensure_daily_backup(fs: &dyn Fs, paths: &Paths, date: NaiveDate) -> io::R
         }
     }
     Ok(true)
+}
+
+/// Write `data` next to `data.json` as a never-overwritten `data.before-<kind>-<stamp>.json`.
+pub fn write_snapshot(
+    fs: &dyn Fs,
+    paths: &Paths,
+    kind: SnapshotKind,
+    data: &Data,
+    zone: &dyn LocalZone,
+    now: DateTime<Utc>,
+) -> io::Result<PathBuf> {
+    let path = unique_stamped_path(fs, zone, now, |stamp| paths.before(kind, stamp))
+        .ok_or_else(|| io::Error::other("找不到可用的檔名"))?;
+    fs.write_sync(&path, &to_json(data))?;
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -1012,5 +1044,59 @@ mod tests {
         assert_eq!(fs.get(&corrupt).unwrap(), b"{broken");
         assert!(!fs.exists(&paths().data()));
         assert!(!fs.exists(&paths().tmp()));
+    }
+
+    fn snap_now() -> DateTime<Utc> {
+        utc("2026-11-13T06:07:08Z")
+    }
+
+    fn snap(fs: &MemFs, kind: SnapshotKind) -> io::Result<PathBuf> {
+        write_snapshot(
+            fs,
+            &paths(),
+            kind,
+            &sample(),
+            tz("Asia/Taipei").as_ref(),
+            snap_now(),
+        )
+    }
+
+    #[test]
+    fn write_snapshot_names_by_kind_and_local_time() {
+        let fs = MemFs::new();
+        let p = snap(&fs, SnapshotKind::Transfer).unwrap();
+        assert_eq!(
+            p,
+            PathBuf::from("/d/partimer/data.before-transfer-20261113-140708.json")
+        );
+        assert_eq!(fs.get(&p).unwrap(), to_json(&sample()));
+        let p = snap(&fs, SnapshotKind::Import).unwrap();
+        assert_eq!(
+            p,
+            PathBuf::from("/d/partimer/data.before-import-20261113-140708.json")
+        );
+        assert_eq!(fs.get(&p).unwrap(), to_json(&sample()));
+    }
+
+    #[test]
+    fn write_snapshot_never_overwrites_an_existing_one() {
+        let fs = MemFs::new();
+        let first = PathBuf::from("/d/partimer/data.before-transfer-20261113-140708.json");
+        fs.put(first.clone(), b"old");
+        let p = snap(&fs, SnapshotKind::Transfer).unwrap();
+        assert_eq!(
+            p,
+            PathBuf::from("/d/partimer/data.before-transfer-20261113-140708-1.json")
+        );
+        assert_eq!(fs.get(&first).unwrap(), b"old");
+        assert_eq!(fs.get(&p).unwrap(), to_json(&sample()));
+    }
+
+    #[test]
+    fn write_snapshot_reports_write_failure() {
+        let fs = MemFs::new();
+        fs.fail_write_syncs.set(true);
+        assert!(snap(&fs, SnapshotKind::Import).is_err());
+        assert!(fs.names().is_empty());
     }
 }
