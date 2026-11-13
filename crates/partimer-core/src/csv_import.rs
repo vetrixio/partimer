@@ -1,10 +1,22 @@
 //! Parse CSV files written by `report::export_csv` back into rows (exact inverse of its format).
 
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use chrono::{NaiveDate, NaiveTime};
+use chrono::{DateTime, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
+use crate::catalog;
+use crate::model::{Data, Entry, Id, new_id};
 use crate::report::CSV_HEADER;
+use crate::zone::LocalZone;
+
+pub(crate) const UNNAMED_CLIENT: &str = "未命名客戶";
+pub(crate) const UNNAMED_PROJECT: &str = "未命名專案";
+
+/// Largest gap (minutes) tolerated between the end time and the minutes column; the export
+/// rounds start, end and minutes independently.
+const TOLERANCE_MINUTES: i64 = 2;
+const MAX_LISTED_ERRORS: usize = 5;
 
 /// One data row of an exported CSV. `line` is the physical line where the record starts
 /// (the header is line 1).
@@ -254,6 +266,211 @@ pub fn parse_file(file: &str, bytes: &[u8]) -> Result<Vec<CsvRow>, Vec<RowError>
     } else {
         Err(errors)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportRow {
+    pub client: String,
+    pub project: String,
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
+    pub paused_seconds: i64,
+    pub title: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CsvImport {
+    pub rows: Vec<ImportRow>,
+    pub files: usize,
+    pub skipped_duplicates: usize,
+    pub first_date: NaiveDate,
+    pub last_date: NaiveDate,
+}
+
+/// Turns the local date and HH:MM columns back into UTC instants. The CSV has no end date, so
+/// the end is searched over the following days for the one whose length best matches
+/// minutes + paused minutes.
+fn resolve(row: &CsvRow, zone: &dyn LocalZone) -> Result<ImportRow, String> {
+    let starts: Vec<DateTime<Utc>> = match zone.from_local(row.date.and_time(row.start)) {
+        LocalResult::Single(t) => vec![t],
+        LocalResult::Ambiguous(a, b) => vec![a, b],
+        LocalResult::None => {
+            return Err(format!(
+                "開始時間 {} {} 在這台電腦的時區不存在（夏令時間）",
+                row.date.format("%Y-%m-%d"),
+                row.start.format("%H:%M")
+            ));
+        }
+    };
+    let span = row.minutes + row.paused_minutes;
+    let mut best: Option<(i64, DateTime<Utc>, DateTime<Utc>)> = None;
+    for k in 0..=(span / 1440 + 1) {
+        let Some(day) = row.date.checked_add_signed(Duration::days(k)) else {
+            continue;
+        };
+        let end_local: NaiveDateTime = day.and_time(row.end);
+        let ends = match zone.from_local(end_local) {
+            LocalResult::Single(t) => vec![t],
+            LocalResult::Ambiguous(a, b) => vec![a, b],
+            LocalResult::None => continue,
+        };
+        for &s in &starts {
+            for &e in &ends {
+                if e < s {
+                    continue;
+                }
+                let diff = ((e - s).num_minutes() - span).abs();
+                if best.is_none_or(|(d, _, _)| diff < d) {
+                    best = Some((diff, s, e));
+                }
+            }
+        }
+    }
+    match best {
+        Some((diff, start, end)) if diff <= TOLERANCE_MINUTES => Ok(ImportRow {
+            client: row.client.clone(),
+            project: row.project.clone(),
+            start,
+            end,
+            paused_seconds: (row.paused_minutes * 60).min((end - start).num_seconds()),
+            title: row.title.clone(),
+            content: row.content.clone(),
+        }),
+        other => Err(format!(
+            "結束時間和分鐘數對不起來（差 {} 分鐘），檔案可能被改過",
+            other.map_or(span, |(d, _, _)| d)
+        )),
+    }
+}
+
+pub fn prepare(files: &[(String, Vec<u8>)], zone: &dyn LocalZone) -> Result<CsvImport, String> {
+    let mut errors: Vec<RowError> = Vec::new();
+    let mut parsed: Vec<CsvRow> = Vec::new();
+    for (name, bytes) in files {
+        match parse_file(name, bytes) {
+            Ok(rows) => parsed.extend(rows),
+            Err(e) => errors.extend(e),
+        }
+    }
+    let mut seen = HashSet::new();
+    let mut skipped_duplicates = 0;
+    let mut unique: Vec<&CsvRow> = Vec::new();
+    for row in &parsed {
+        if seen.insert(row.key()) {
+            unique.push(row);
+        } else {
+            skipped_duplicates += 1;
+        }
+    }
+    let mut rows = Vec::with_capacity(unique.len());
+    for row in &unique {
+        match resolve(row, zone) {
+            Ok(r) => rows.push(r),
+            Err(problem) => errors.push(RowError {
+                file: row.file.clone(),
+                line: Some(row.line),
+                problem,
+            }),
+        }
+    }
+    if !errors.is_empty() {
+        let mut lines: Vec<String> = errors
+            .iter()
+            .take(MAX_LISTED_ERRORS)
+            .map(ToString::to_string)
+            .collect();
+        if errors.len() > MAX_LISTED_ERRORS {
+            lines.push(format!("…還有 {} 筆", errors.len() - MAX_LISTED_ERRORS));
+        }
+        return Err(lines.join("\n"));
+    }
+    let (Some(first_date), Some(last_date)) = (
+        unique.iter().map(|r| r.date).min(),
+        unique.iter().map(|r| r.date).max(),
+    ) else {
+        return Err("選的檔案裡沒有任何紀錄".to_string());
+    };
+    rows.sort_by_key(|r| r.start);
+    Ok(CsvImport {
+        rows,
+        files: files.len(),
+        skipped_duplicates,
+        first_date,
+        last_date,
+    })
+}
+
+fn names_of(row: &ImportRow) -> (String, String) {
+    let pick = |s: &str, fallback: &str| {
+        let t = s.trim();
+        if t.is_empty() { fallback } else { t }.to_string()
+    };
+    (
+        pick(&row.client, UNNAMED_CLIENT),
+        pick(&row.project, UNNAMED_PROJECT),
+    )
+}
+
+fn find_project(data: &Data, client: &str, project: &str) -> Option<Id> {
+    let client = data.clients.iter().find(|c| c.name == client)?;
+    data.projects
+        .iter()
+        .find(|p| p.client_id == client.id && p.name == project)
+        .map(|p| p.id.clone())
+}
+
+/// How many clients and projects `apply` would create.
+pub fn new_catalog_counts(data: &Data, imp: &CsvImport) -> (usize, usize) {
+    let pairs: HashSet<(String, String)> = imp.rows.iter().map(names_of).collect();
+    let clients: HashSet<&str> = pairs.iter().map(|(c, _)| c.as_str()).collect();
+    let new_clients = clients
+        .iter()
+        .filter(|c| !data.clients.iter().any(|e| e.name == **c))
+        .count();
+    let new_projects = pairs
+        .iter()
+        .filter(|(c, p)| find_project(data, c, p).is_none())
+        .count();
+    (new_clients, new_projects)
+}
+
+/// Adds the rows as finished entries, creating missing clients and projects.
+/// Returns how many entries were added.
+pub fn apply(data: &mut Data, imp: CsvImport) -> usize {
+    let mut ids: HashMap<(String, String), Id> = HashMap::new();
+    let mut added = 0;
+    for row in imp.rows {
+        let names = names_of(&row);
+        let project_id = match ids.get(&names) {
+            Some(id) => id.clone(),
+            None => {
+                let found = find_project(data, &names.0, &names.1);
+                let id = match found {
+                    Some(id) => id,
+                    None => match catalog::add_project(data, &names.0, &names.1) {
+                        Ok(id) => id,
+                        Err(_) => continue,
+                    },
+                };
+                ids.insert(names, id.clone());
+                id
+            }
+        };
+        data.entries.push(Entry {
+            extra: Default::default(),
+            id: new_id(),
+            project_id,
+            start: row.start,
+            end: Some(row.end),
+            title: row.title,
+            content: row.content,
+            paused_seconds: row.paused_seconds,
+            pause_started_at: None,
+        });
+        added += 1;
+    }
+    added
 }
 
 #[cfg(test)]
@@ -526,5 +743,213 @@ mod tests {
         let b = parse_file("b.csv", &two_rows()).unwrap();
         assert_eq!(a[0].key(), b[0].key());
         assert_ne!(a[0].key(), a[1].key());
+    }
+
+    fn files(rows: &[&str]) -> Vec<(String, Vec<u8>)> {
+        vec![("a.csv".to_string(), text(&rows.join("\r\n")))]
+    }
+
+    fn prep(zone: &str, rows: &[&str]) -> Result<CsvImport, String> {
+        prepare(&files(rows), tz(zone).as_ref())
+    }
+
+    fn one(zone: &str, row: &str) -> ImportRow {
+        prep(zone, &[row]).unwrap().rows.remove(0)
+    }
+
+    #[test]
+    fn resolves_same_day_entry() {
+        let r = one(
+            "Asia/Taipei",
+            "2026-10-06,王小明,官網改版,09:30,11:00,90,1.50,0,,",
+        );
+        assert_eq!(r.start, utc("2026-10-06T01:30:00Z"));
+        assert_eq!(r.end, utc("2026-10-06T03:00:00Z"));
+        assert_eq!(r.paused_seconds, 0);
+    }
+
+    #[test]
+    fn resolves_overnight_entry() {
+        let r = one("Asia/Taipei", "2026-10-06,A,B,23:00,01:30,150,2.50,0,,");
+        assert_eq!(r.start, utc("2026-10-06T15:00:00Z"));
+        assert_eq!(r.end, utc("2026-10-06T17:30:00Z"));
+    }
+
+    #[test]
+    fn resolves_entry_longer_than_a_day() {
+        let r = one("Asia/Taipei", "2026-10-06,A,B,09:00,10:00,1500,25.00,0,,");
+        assert_eq!(r.end, utc("2026-10-07T02:00:00Z"));
+    }
+
+    #[test]
+    fn uses_pause_to_pick_the_day() {
+        let r = one("Asia/Taipei", "2026-10-06,A,B,09:00,09:30,30,0.50,1440,,");
+        assert_eq!(r.end, utc("2026-10-07T01:30:00Z"));
+        assert_eq!(r.paused_seconds, 1440 * 60);
+    }
+
+    #[test]
+    fn resolves_dst_repeated_hour() {
+        let r = one("America/New_York", "2026-11-01,A,B,01:30,01:50,80,1.33,0,,");
+        assert_eq!(r.start, utc("2026-11-01T05:30:00Z"));
+        assert_eq!(r.end, utc("2026-11-01T06:50:00Z"));
+    }
+
+    #[test]
+    fn rejects_dst_gap_start() {
+        let e = prep(
+            "America/New_York",
+            &["2026-03-08,A,B,02:30,03:30,60,1.00,0,,"],
+        )
+        .unwrap_err();
+        assert!(
+            e.contains("開始時間 2026-03-08 02:30 在這台電腦的時區不存在（夏令時間）"),
+            "{e}"
+        );
+        assert!(e.contains("`a.csv` 第 2 行"), "{e}");
+    }
+
+    #[test]
+    fn tolerates_two_minute_rounding() {
+        let r = one("Asia/Taipei", "2026-10-06,A,B,09:00,10:00,58,0.97,0,,");
+        assert_eq!(r.end, utc("2026-10-06T02:00:00Z"));
+    }
+
+    #[test]
+    fn rejects_mismatch_over_two_minutes() {
+        let e = prep("Asia/Taipei", &["2026-10-06,A,B,09:00,10:00,57,0.95,0,,"]).unwrap_err();
+        assert!(
+            e.contains("結束時間和分鐘數對不起來（差 3 分鐘），檔案可能被改過"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn clamps_pause_to_duration() {
+        let r = one("Asia/Taipei", "2026-10-06,A,B,09:00,09:00,0,0.00,1,,");
+        assert_eq!(r.paused_seconds, 0);
+    }
+
+    #[test]
+    fn duplicate_rows_across_files_are_skipped() {
+        let bytes = two_rows();
+        let f = vec![
+            ("a.csv".to_string(), bytes.clone()),
+            ("b.csv".to_string(), bytes),
+        ];
+        let imp = prepare(&f, tz("Asia/Taipei").as_ref()).unwrap();
+        assert_eq!(imp.rows.len(), 2);
+        assert_eq!(imp.skipped_duplicates, 2);
+        assert_eq!(imp.files, 2);
+        assert_eq!(
+            imp.first_date,
+            NaiveDate::from_ymd_opt(2026, 10, 5).unwrap()
+        );
+        assert_eq!(imp.last_date, NaiveDate::from_ymd_opt(2026, 10, 6).unwrap());
+        assert!(imp.rows[0].start < imp.rows[1].start);
+    }
+
+    #[test]
+    fn error_list_caps_at_five() {
+        let rows: Vec<String> = (0..7)
+            .map(|i| format!("2026-10-06,A,B,09:00,10:00,5,0.08,0,t{i},"))
+            .collect();
+        let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
+        let e = prep("Asia/Taipei", &refs).unwrap_err();
+        let lines: Vec<&str> = e.split('\n').collect();
+        assert_eq!(lines.len(), 6, "{e}");
+        assert_eq!(lines[5], "…還有 2 筆");
+    }
+
+    #[test]
+    fn empty_selection_is_an_error() {
+        assert_eq!(
+            prep("Asia/Taipei", &[]).unwrap_err(),
+            "選的檔案裡沒有任何紀錄"
+        );
+    }
+
+    fn import_of(rows: &[(&str, &str)]) -> CsvImport {
+        let rows: Vec<String> = rows
+            .iter()
+            .enumerate()
+            .map(|(i, (c, p))| format!("2026-10-06,{c},{p},09:00,10:00,60,1.00,0,t{i},"))
+            .collect();
+        let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
+        prep("Asia/Taipei", &refs).unwrap()
+    }
+
+    fn data_with_archived() -> Data {
+        let mut d = Data::default();
+        d.clients.push(Client {
+            extra: Default::default(),
+            id: "c1".into(),
+            name: "王小明".into(),
+            archived: true,
+        });
+        d.projects.push(Project {
+            extra: Default::default(),
+            id: "p1".into(),
+            client_id: "c1".into(),
+            name: "官網改版".into(),
+            color: 3,
+            archived: true,
+        });
+        d
+    }
+
+    #[test]
+    fn apply_reuses_existing_names_including_archived() {
+        let mut d = data_with_archived();
+        let imp = import_of(&[("王小明", "官網改版")]);
+        assert_eq!(new_catalog_counts(&d, &imp), (0, 0));
+        assert_eq!(apply(&mut d, imp), 1);
+        assert_eq!(d.clients.len(), 1);
+        assert_eq!(d.projects.len(), 1);
+        assert_eq!(d.entries.len(), 1);
+        assert_eq!(d.entries[0].project_id, "p1");
+        assert_eq!(d.entries[0].pause_started_at, None);
+        assert!(d.entries[0].end.is_some());
+    }
+
+    #[test]
+    fn apply_trims_names_and_fills_unnamed() {
+        let mut d = data_with_archived();
+        let imp = import_of(&[(" 王小明 ", " 官網改版 "), ("  ", "  ")]);
+        assert_eq!(apply(&mut d, imp), 2);
+        assert_eq!(d.entries[0].project_id, "p1");
+        let c = d.clients.iter().find(|c| c.name == UNNAMED_CLIENT).unwrap();
+        let p = d
+            .projects
+            .iter()
+            .find(|p| p.name == UNNAMED_PROJECT)
+            .unwrap();
+        assert_eq!(p.client_id, c.id);
+        assert_eq!(d.entries[1].project_id, p.id);
+    }
+
+    #[test]
+    fn apply_colors_follow_catalog_rule() {
+        let mut d = Data::default();
+        let imp = import_of(&[("甲", "一"), ("甲", "二"), ("甲", "三")]);
+        apply(&mut d, imp);
+        let colors: Vec<u8> = d.projects.iter().map(|p| p.color).collect();
+        assert_eq!(colors, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn new_catalog_counts_matches_apply() {
+        let mut d = data_with_archived();
+        let imp = import_of(&[
+            ("王小明", "新專案"),
+            ("乙", "x"),
+            ("乙", "y"),
+            ("王小明", "官網改版"),
+        ]);
+        let (nc, np) = new_catalog_counts(&d, &imp);
+        assert_eq!((nc, np), (1, 3));
+        let (c0, p0) = (d.clients.len(), d.projects.len());
+        apply(&mut d, imp);
+        assert_eq!((d.clients.len() - c0, d.projects.len() - p0), (nc, np));
     }
 }
