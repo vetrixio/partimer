@@ -1202,5 +1202,9 @@ impl<F: Fs> Session<F> {
     }
 }
 
+mod moving;
+
+pub use moving::TransferInPlan;
+
 #[cfg(test)]
 mod tests;

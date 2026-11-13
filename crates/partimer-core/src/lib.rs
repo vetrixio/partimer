@@ -16,7 +16,7 @@ pub mod zone;
 
 pub use duration::*;
 pub use model::*;
-pub use session::Session;
+pub use session::{Session, TransferInPlan};
 pub use storage::{Paths, RealFs, default_dir};
 pub use timer::*;
 pub use views::*;
