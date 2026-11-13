@@ -3,9 +3,9 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use chrono::{DateTime, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use chrono::{DateTime, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
 
-use crate::catalog;
+use crate::catalog::{self, COLOR_COUNT};
 use crate::model::{Data, Entry, Id, new_id};
 use crate::report::CSV_HEADER;
 use crate::zone::LocalZone;
@@ -77,8 +77,8 @@ pub struct RowError {
 impl fmt::Display for RowError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.line {
-            Some(line) => write!(f, "`{}` 第 {line} 行：{}", self.file, self.problem),
-            None => write!(f, "`{}`：{}", self.file, self.problem),
+            Some(line) => write!(f, "「{}」第 {line} 行：{}", self.file, self.problem),
+            None => write!(f, "「{}」：{}", self.file, self.problem),
         }
     }
 }
@@ -307,9 +307,12 @@ fn resolve(row: &CsvRow, zone: &dyn LocalZone) -> Result<ImportRow, String> {
         return Err("分鐘數太大，檔案可能被改過".to_string());
     };
     let mut best: Option<(i64, DateTime<Utc>, DateTime<Utc>)> = None;
-    // The true end is always within a day of start + span.
-    let d = span / 1440;
-    for k in d.saturating_sub(1)..=d + 1 {
+    // The true end is always within a day of the day that start + span lands on.
+    let start_minutes = i64::from(row.start.hour() * 60 + row.start.minute());
+    let Some(centre) = span.checked_add(start_minutes).map(|m| m / 1440) else {
+        return Err("分鐘數太大，檔案可能被改過".to_string());
+    };
+    for k in centre.saturating_sub(1)..=centre.saturating_add(1) {
         let Some(day) = Duration::try_days(k).and_then(|n| row.date.checked_add_signed(n)) else {
             continue;
         };
@@ -344,10 +347,10 @@ fn resolve(row: &CsvRow, zone: &dyn LocalZone) -> Result<ImportRow, String> {
             title: row.title.clone(),
             content: row.content.clone(),
         }),
-        other => Err(format!(
-            "結束時間和分鐘數對不起來（差 {} 分鐘），檔案可能被改過",
-            other.map_or(span, |(d, _, _)| d)
+        Some((diff, _, _)) => Err(format!(
+            "結束時間和分鐘數對不起來（差 {diff} 分鐘），檔案可能被改過"
         )),
+        None => Err("結束時間和分鐘數對不起來，檔案可能被改過".to_string()),
     }
 }
 
@@ -447,6 +450,7 @@ pub fn new_catalog_counts(data: &Data, imp: &CsvImport) -> (usize, usize) {
 pub fn apply(data: &mut Data, imp: CsvImport) -> usize {
     let mut ids: HashMap<(String, String), Id> = HashMap::new();
     let mut added = 0;
+    let mut created = 0usize;
     for row in imp.rows {
         let names = names_of(&row);
         let project_id = match ids.get(&names) {
@@ -455,10 +459,18 @@ pub fn apply(data: &mut Data, imp: CsvImport) -> usize {
                 let found = find_project(data, &names.0, &names.1);
                 let id = match found {
                     Some(id) => id,
-                    None => match catalog::add_project(data, &names.0, &names.1) {
-                        Ok(id) => id,
-                        Err(_) => continue,
-                    },
+                    None => {
+                        // Names come out of `names_of` already normalised and the project was
+                        // just looked up as missing, so `add_project` cannot refuse them.
+                        let id = catalog::add_project(data, &names.0, &names.1)
+                            .expect("names are normalised before add_project");
+                        // Spec 5.4: new projects take colours 0..7 in creation order.
+                        if let Some(p) = data.projects.iter_mut().find(|p| p.id == id) {
+                            p.color = (created % COLOR_COUNT as usize) as u8;
+                        }
+                        created += 1;
+                        id
+                    }
                 };
                 ids.insert(names, id.clone());
                 id
@@ -659,7 +671,7 @@ mod tests {
         );
         assert_eq!(
             errs[0].to_string(),
-            "`a.csv`：第一行不是打工人計時器匯出的欄位名稱"
+            "「a.csv」：第一行不是打工人計時器匯出的欄位名稱"
         );
     }
 
@@ -669,7 +681,7 @@ mod tests {
         let errs = err_text(parse_file("a.csv", &[0xA4, 0xE9, 0xB4, 0xC1, 0x0D, 0x0A]));
         assert_eq!(
             errs,
-            vec!["`a.csv`：檔案不是 UTF-8 編碼，可能被 Excel 另存過"]
+            vec!["「a.csv」：檔案不是 UTF-8 編碼，可能被 Excel 另存過"]
         );
     }
 
@@ -680,7 +692,7 @@ mod tests {
         );
         assert_eq!(
             err_text(parse_file("a.csv", &bytes)),
-            vec!["`a.csv` 第 3 行：日期『2026/10/6』格式不對，應為 YYYY-MM-DD"]
+            vec!["「a.csv」第 3 行：日期『2026/10/6』格式不對，應為 YYYY-MM-DD"]
         );
     }
 
@@ -689,12 +701,12 @@ mod tests {
         let bytes = text("2026-10-05,A,P,9:3,10:00,60,1.00,0,t,c\r\n");
         assert_eq!(
             err_text(parse_file("a.csv", &bytes)),
-            vec!["`a.csv` 第 2 行：開始時間『9:3』格式不對，應為 HH:MM"]
+            vec!["「a.csv」第 2 行：開始時間『9:3』格式不對，應為 HH:MM"]
         );
         let bytes = text("2026-10-05,A,P,09:00,10:7,60,1.00,0,t,c\r\n");
         assert_eq!(
             err_text(parse_file("a.csv", &bytes)),
-            vec!["`a.csv` 第 2 行：結束時間『10:7』格式不對，應為 HH:MM"]
+            vec!["「a.csv」第 2 行：結束時間『10:7』格式不對，應為 HH:MM"]
         );
     }
 
@@ -703,7 +715,7 @@ mod tests {
         let bytes = text("2026-10-05,A,P,09:00\r\n");
         assert_eq!(
             err_text(parse_file("a.csv", &bytes)),
-            vec!["`a.csv` 第 2 行：欄位數是 4，應為 10"]
+            vec!["「a.csv」第 2 行：欄位數是 4，應為 10"]
         );
     }
 
@@ -715,8 +727,8 @@ mod tests {
         assert_eq!(
             err_text(parse_file("a.csv", &bytes)),
             vec![
-                "`a.csv` 第 2 行：分鐘『-5』應為 0 以上的整數",
-                "`a.csv` 第 3 行：暫停分鐘『x』應為 0 以上的整數",
+                "「a.csv」第 2 行：分鐘『-5』應為 0 以上的整數",
+                "「a.csv」第 3 行：暫停分鐘『x』應為 0 以上的整數",
             ]
         );
     }
@@ -726,7 +738,7 @@ mod tests {
         let bytes = text("2026-10-05,A,P,09:00,10:00,60,1.00,0,\"oops,c\r\n");
         assert_eq!(
             err_text(parse_file("a.csv", &bytes)),
-            vec!["`a.csv` 第 2 行：引號沒有成對"]
+            vec!["「a.csv」第 2 行：引號沒有成對"]
         );
     }
 
@@ -813,7 +825,30 @@ mod tests {
             e.contains("開始時間 2026-03-08 02:30 在這台電腦的時區不存在（夏令時間）"),
             "{e}"
         );
-        assert!(e.contains("`a.csv` 第 2 行"), "{e}");
+        assert!(e.contains("「a.csv」第 2 行"), "{e}");
+    }
+
+    #[test]
+    fn dst_spring_forward_long_overnight_entry_resolves() {
+        let r = one(
+            "America/New_York",
+            "2026-03-07,A,B,23:30,00:10,1420,23.67,0,,",
+        );
+        assert_eq!(r.end, utc("2026-03-09T04:10:00Z"));
+    }
+
+    #[test]
+    fn mismatch_without_any_candidate_has_no_minute_count() {
+        let e = prep(
+            "Asia/Taipei",
+            &["2026-10-06,A,B,09:00,10:00,999999999999999,0,0,,"],
+        )
+        .unwrap_err();
+        assert!(
+            e.contains("結束時間和分鐘數對不起來，檔案可能被改過"),
+            "{e}"
+        );
+        assert!(!e.contains("差"), "{e}");
     }
 
     #[test]
@@ -936,12 +971,12 @@ mod tests {
     }
 
     #[test]
-    fn apply_colors_follow_catalog_rule() {
+    fn apply_colors_rotate_in_creation_order() {
         let mut d = Data::default();
-        let imp = import_of(&[("甲", "一"), ("甲", "二"), ("甲", "三")]);
+        let imp = import_of(&[("甲", "一"), ("乙", "二")]);
         apply(&mut d, imp);
         let colors: Vec<u8> = d.projects.iter().map(|p| p.color).collect();
-        assert_eq!(colors, vec![0, 1, 2]);
+        assert_eq!(colors, vec![0, 1]);
     }
 
     #[test]
