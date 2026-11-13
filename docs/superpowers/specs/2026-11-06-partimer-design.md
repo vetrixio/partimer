@@ -340,7 +340,7 @@ STOP、START、儲存、切換專案時：
 2026-11-06T14:05:00+08:00	START	ab12cd34	start=2026-11-06T14:05:00+08:00	end=-	title_len=4	content_len=0
 ```
 
-欄位：本機時間、動作、紀錄 id 前 8 碼、起、訖、標題字數、內容字數。動作至少包含：START、PAUSE、RESUME、STOP、SAVE（存標題內容）、EDIT、ADD（補登）、DELETE；另外記錄 RESTORE（從備份還原）、SWITCH（切換專案）、AUTO_STOP（12 小時提醒的結束）〔設計者決定〕。寫入失敗不影響主流程。
+欄位：本機時間、動作、紀錄 id 前 8 碼、起、訖、標題字數、內容字數。動作至少包含：START、PAUSE、RESUME、STOP、SAVE（存標題內容）、EDIT、ADD（補登）、DELETE；另外記錄 RESTORE（從備份還原）、SWITCH（切換專案）、AUTO_STOP（12 小時提醒的結束）〔設計者決定〕；另有 TRANSFER_OUT（轉出資料）、TRANSFER_IN（轉入資料）、IMPORT_CSV（匯入 CSV）。寫入失敗不影響主流程。
 
 ---
 
