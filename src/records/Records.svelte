@@ -322,6 +322,7 @@
     background: var(--notice-bg);
     border-bottom: 1px solid var(--notice-line);
     overflow-wrap: anywhere;
+    white-space: pre-line;
   }
   .body {
     flex: 1;
