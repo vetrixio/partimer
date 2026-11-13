@@ -1,5 +1,6 @@
 pub mod activity;
 pub mod catalog;
+pub mod csv_import;
 pub mod duration;
 pub mod edit;
 pub mod model;
