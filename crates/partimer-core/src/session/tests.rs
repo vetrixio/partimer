@@ -1543,3 +1543,5 @@ fn normal_stop_has_no_clock_notice() {
     assert!(notice(&s, NoticeKind::Info).is_none());
     assert!(!log_text(&s).contains("clock-went-back"));
 }
+
+mod moving;
