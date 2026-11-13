@@ -45,7 +45,7 @@ pub struct SettingsView {
     pub data_dir: String,
 }
 
-fn session<'a>(state: &'a State<'_, AppState>) -> MutexGuard<'a, Session<RealFs>> {
+pub(crate) fn session<'a>(state: &'a State<'_, AppState>) -> MutexGuard<'a, Session<RealFs>> {
     crate::lock(&state.session)
 }
 
@@ -55,7 +55,7 @@ pub(crate) fn changed(app: &AppHandle) {
     emit_state_changed(app);
 }
 
-fn settings_changed(app: &AppHandle) {
+pub(crate) fn settings_changed(app: &AppHandle) {
     if let Err(e) = app.emit(SETTINGS_CHANGED, ()) {
         eprintln!("partimer: emit {SETTINGS_CHANGED}: {e}");
     }
@@ -287,7 +287,7 @@ pub async fn export_csv(
 }
 
 /// Chinese reason first, the raw (often English) io error in parentheses.
-fn export_error(e: &std::io::Error) -> String {
+pub(crate) fn export_error(e: &std::io::Error) -> String {
     use std::io::ErrorKind;
     let reason = match e.kind() {
         ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem => "沒有權限寫入這個位置",
