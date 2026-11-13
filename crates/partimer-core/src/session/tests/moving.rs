@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use super::*;
-use crate::session::moving::SAVE_BLOCKED_MOVE;
+use crate::session::moving::{CSV_NEEDS_EMPTY, SAVE_BLOCKED_MOVE};
 
 /// A catalog different from `base_data`, so a transfer visibly replaces it.
 fn other_data() -> Data {
@@ -263,4 +263,211 @@ fn snapshot_while_paused_ends_at_pause_start() {
     let e = snap.entries.iter().find(|e| e.id == id).expect("entry");
     assert_eq!(e.end, Some(at(600)));
     assert_eq!(e.pause_started_at, None);
+}
+
+// ---- CSV import ----
+
+fn month_csv(s: &Session<MemFs>, year: i32, month: u32) -> Vec<u8> {
+    s.export_csv(RecordsQuery {
+        year,
+        month,
+        client_id: None,
+        project_id: None,
+    })
+}
+
+fn csv_files(s: &Session<MemFs>) -> Vec<(String, Vec<u8>)> {
+    vec![
+        ("sep.csv".to_string(), month_csv(s, 2026, 9)),
+        ("oct.csv".to_string(), month_csv(s, 2026, 10)),
+    ]
+}
+
+fn two_month_data() -> Data {
+    let mut d = base_data();
+    d.entries.push(entry(
+        "e3",
+        "p1",
+        "2026-09-20T01:00:00Z",
+        Some("2026-09-20T03:00:00Z"),
+        "九月",
+    ));
+    d
+}
+
+fn empty_session() -> Session<MemFs> {
+    open(MemFs::new(), at(0))
+}
+
+fn import_names(s: &Session<MemFs>) -> Vec<PathBuf> {
+    s.fs.names()
+        .into_iter()
+        .filter(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("data.before-import-")
+        })
+        .collect()
+}
+
+#[test]
+fn csv_round_trip_restores_entries() {
+    let a = open(seed(&two_month_data()), at(0));
+    let files = csv_files(&a);
+    let mut b = empty_session();
+    let plan = b.prepare_csv_import(&files).unwrap();
+    assert_eq!(b.import_csv(plan, at(10)).unwrap(), "已匯入 3 筆紀錄。");
+    assert_eq!(b.data.entries.len(), 3);
+    assert_eq!(csv_files(&b), files);
+}
+
+#[test]
+fn csv_round_trip_with_seconds_within_a_minute() {
+    let mut d = base_data();
+    d.entries.clear();
+    d.entries.push(entry(
+        "s1",
+        "p1",
+        "2026-10-06T01:30:59Z",
+        Some("2026-10-06T03:00:00Z"),
+        "秒",
+    ));
+    d.entries.push(entry(
+        "s2",
+        "p2",
+        "2026-10-07T01:30:59Z",
+        Some("2026-10-07T03:00:00Z"),
+        "秒二",
+    ));
+    let a = open(seed(&d), at(0));
+    let files = vec![("oct.csv".to_string(), month_csv(&a, 2026, 10))];
+    let mut b = empty_session();
+    let plan = b.prepare_csv_import(&files).unwrap();
+    b.import_csv(plan, at(10)).unwrap();
+    assert_eq!(b.data.entries.len(), 2);
+    for orig in &d.entries {
+        let got = b
+            .data
+            .entries
+            .iter()
+            .find(|e| e.title == orig.title)
+            .unwrap();
+        let mins = |e: &Entry| (e.end.unwrap() - e.start).num_seconds() / 60;
+        assert!((mins(got) - mins(orig)).abs() <= 1, "{}", orig.title);
+    }
+}
+
+#[test]
+fn import_csv_refused_when_entries_exist() {
+    let a = open(seeded(), at(0));
+    let files = csv_files(&a);
+    let b = open(seeded(), at(0));
+    assert_eq!(
+        b.prepare_csv_import(&files).unwrap_err(),
+        CSV_NEEDS_EMPTY.to_string()
+    );
+}
+
+#[test]
+fn import_csv_refused_with_quarantined_entry() {
+    let a = open(seeded(), at(0));
+    let files = csv_files(&a);
+    let mut d = Data::default();
+    d.quarantined_entries.push(json!({"id": "bad"}));
+    let b = open(seed(&d), at(0));
+    assert_eq!(
+        b.prepare_csv_import(&files).unwrap_err(),
+        CSV_NEEDS_EMPTY.to_string()
+    );
+}
+
+#[test]
+fn import_csv_rechecks_entries_at_apply() {
+    let a = open(seeded(), at(0));
+    let files = csv_files(&a);
+    let mut b = open(seed(&Data::default()), at(0));
+    let plan = b.prepare_csv_import(&files).unwrap();
+    b.data = base_data();
+    b.start("p1", "新", "", at(5)).unwrap();
+    b.stop("新", "", at(60)).unwrap();
+    let before = b.data.clone();
+    assert_eq!(
+        b.import_csv(plan, at(100)).unwrap_err(),
+        CSV_NEEDS_EMPTY.to_string()
+    );
+    assert_eq!(b.data, before);
+    assert_eq!(count_action(&b, "IMPORT_CSV"), 0);
+}
+
+#[test]
+fn import_csv_allowed_with_only_catalog() {
+    let a = open(seeded(), at(0));
+    let files = csv_files(&a);
+    let mut d = base_data();
+    d.entries.clear();
+    let mut b = open(seed(&d), at(0));
+    let plan = b.prepare_csv_import(&files).unwrap();
+    let msg = b.import_csv(plan, at(10)).unwrap();
+    assert!(msg.starts_with("已匯入 2 筆紀錄。"), "{msg}");
+    assert_eq!(b.data.entries.len(), 2);
+    assert_eq!(import_names(&b).len(), 1);
+}
+
+#[test]
+fn import_csv_into_empty_skips_snapshot() {
+    let a = open(seeded(), at(0));
+    let files = csv_files(&a);
+    let mut b = empty_session();
+    let plan = b.prepare_csv_import(&files).unwrap();
+    b.import_csv(plan, at(10)).unwrap();
+    assert!(import_names(&b).is_empty());
+}
+
+#[test]
+fn import_csv_refused_when_save_blocked() {
+    let a = open(seeded(), at(0));
+    let files = csv_files(&a);
+    let mut b = empty_session();
+    let plan = b.prepare_csv_import(&files).unwrap();
+    b.save_blocked = true;
+    assert_eq!(
+        b.import_csv(plan, at(10)).unwrap_err(),
+        SAVE_BLOCKED_MOVE.to_string()
+    );
+    assert_eq!(
+        b.prepare_csv_import(&files).unwrap_err(),
+        SAVE_BLOCKED_MOVE.to_string()
+    );
+}
+
+#[test]
+fn import_csv_logs_one_line() {
+    let a = open(seeded(), at(0));
+    let files = csv_files(&a);
+    let mut b = empty_session();
+    let plan = b.prepare_csv_import(&files).unwrap();
+    b.import_csv(plan, at(10)).unwrap();
+    assert_eq!(count_action(&b, "IMPORT_CSV"), 1);
+    assert!(log_text(&b).contains("files=2 entries=2 skipped=0"));
+}
+
+#[test]
+fn import_csv_confirm_text() {
+    let a = open(seeded(), at(0));
+    let one = month_csv(&a, 2026, 10);
+    // The same file three times: every row is a duplicate after the first copy.
+    let files = vec![
+        ("a.csv".to_string(), one.clone()),
+        ("b.csv".to_string(), one.clone()),
+        ("c.csv".to_string(), one),
+    ];
+    let b = empty_session();
+    let plan = b.prepare_csv_import(&files).unwrap();
+    assert_eq!(
+        plan.confirm_text,
+        "將匯入 2 筆紀錄（2026-10-05 ～ 2026-10-05），新增 1 個客戶、2 個專案；略過重複 4 筆。時間依這台電腦的時區解讀。"
+    );
+    let plan = b.prepare_csv_import(&files[..1]).unwrap();
+    assert!(!plan.confirm_text.contains("略過重複"));
 }
