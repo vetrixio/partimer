@@ -314,6 +314,10 @@ Set-up: a few entries this month and last month across two clients, one entry th
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
+- **R20** 匯入 CSV (next to 匯出 CSV) on a fresh install with the CSV files of several months selected at once: the confirm box shows the right number of entries, and the panel and records window update immediately. With entries already present it shows the hint to use 「轉入資料」 instead and imports nothing.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
 
 ## Common: settings window (each item on macOS, Windows and Ubuntu)
 
@@ -360,6 +364,18 @@ Set-up: two clients with two projects each, one archived project, one project wi
   - [ ] Windows
   - [ ] Ubuntu
 - **S11** Dark mode: the window stays readable, the swatch outline is visible on both themes.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **S12** Cross-platform transfer: 設定 → 資料 → 換電腦 → 轉出資料 on one platform, 轉入資料 on another (try each pair you have). Clients, projects, colours, archived state, entries (including their seconds) and settings are identical afterwards. 轉出 while timing is refused with 「請先按 STOP 結束計時再轉出」.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **S13** 轉入 over a running timer: the confirm box states how many entries will be replaced and 「計時中的那筆也會被取代。」; after 確定 the panel is idle, and the data folder has `data.before-transfer-….json` (transferring that file back in restores the old data, with the running entry ended at the moment of the transfer). 取消 changes nothing.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **S14** After 轉入, the floating clock appears at a visible position on the new screen (when the old coordinates are off-screen it goes to the top-right corner).
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
