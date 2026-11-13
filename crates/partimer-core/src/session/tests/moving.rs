@@ -232,3 +232,35 @@ fn transfer_in_logs_counts() {
     assert!(log.contains("replaced=1"));
     assert!(log.contains("snapshot=data.before-transfer-"));
 }
+
+#[test]
+fn snapshot_while_running_can_be_transferred_back_in() {
+    let a = open(seeded(), at(0));
+    let mut b = open(seed(&other_data()), at(0));
+    b.start("p9", "進行中", "內容", at(0)).unwrap();
+    let id = running_id(&b, at(1));
+    transfer(&a, &mut b, at(H));
+    let snaps = snapshot_names(&b);
+    let plan = b
+        .prepare_transfer_in(&b.fs.get(&snaps[0]).unwrap())
+        .unwrap();
+    b.transfer_in(plan, at(2 * H)).unwrap();
+    let e = b.data.entries.iter().find(|e| e.id == id).expect("entry");
+    assert_eq!(e.end, Some(at(H)));
+    assert_eq!((e.title.as_str(), e.content.as_str()), ("進行中", "內容"));
+}
+
+#[test]
+fn snapshot_while_paused_ends_at_pause_start() {
+    let a = open(seeded(), at(0));
+    let mut b = open(seed(&other_data()), at(0));
+    b.start("p9", "進行中", "", at(0)).unwrap();
+    let id = running_id(&b, at(1));
+    b.pause(at(600)).unwrap();
+    transfer(&a, &mut b, at(H));
+    let snaps = snapshot_names(&b);
+    let snap = parse_data(&b.fs.get(&snaps[0]).unwrap()).unwrap();
+    let e = snap.entries.iter().find(|e| e.id == id).expect("entry");
+    assert_eq!(e.end, Some(at(600)));
+    assert_eq!(e.pause_started_at, None);
+}

@@ -7,6 +7,7 @@ use super::{Session, file_name, msg, ymd};
 use crate::activity::Action;
 use crate::model::{Data, to_json};
 use crate::storage::{self, Fs, SnapshotKind};
+use crate::timer;
 use crate::transfer::{counts, date_range, is_empty, parse_transfer};
 
 pub(crate) const SAVE_BLOCKED_MOVE: &str =
@@ -20,6 +21,16 @@ pub struct TransferInPlan {
 }
 
 impl<F: Fs> Session<F> {
+    /// A copy of the data for a pre-change snapshot, with a running or paused entry ended the
+    /// way STOP would at `now`, so the snapshot can be transferred back in.
+    pub(super) fn snapshot_data(&self, now: DateTime<Utc>) -> Data {
+        let mut copy = self.data.clone();
+        if let Some(e) = self.running() {
+            let _ = timer::stop(&mut copy, &e.title, &e.content, now);
+        }
+        copy
+    }
+
     /// The bytes to save as the transfer file. Not allowed while a timer is running.
     pub fn transfer_out(&self, _now: DateTime<Utc>) -> Result<Vec<u8>, String> {
         if self.running().is_some() {
@@ -78,7 +89,7 @@ impl<F: Fs> Session<F> {
                 &self.fs,
                 &self.paths,
                 SnapshotKind::Transfer,
-                &self.data,
+                &self.snapshot_data(now),
                 self.zone.as_ref(),
                 now,
             )
