@@ -13,6 +13,8 @@
   let view = $state<SettingsView | null>(null);
   let message = $state<string | null>(null);
   let busy = $state(false);
+  let info = $state<string | null>(null);
+  let transferring = $state(false);
   /** Slider value while dragging; null when it follows the stored value. */
   let dragOpacity = $state<number | null>(null);
 
@@ -81,6 +83,19 @@
       await api.openDataFolder();
     } catch (e) {
       message = String(e);
+    }
+  }
+
+  async function transfer(task: () => Promise<string | null>) {
+    transferring = true;
+    message = null;
+    info = null;
+    try {
+      info = await task();
+    } catch (e) {
+      message = String(e);
+    } finally {
+      transferring = false;
     }
   }
 
@@ -192,6 +207,18 @@
       <h2>資料</h2>
       <p class="path">{view.dataDir}</p>
       <button type="button" onclick={openFolder}>打開資料夾</button>
+      <h3>換電腦</h3>
+      <div class="actions">
+        <button type="button" onclick={() => transfer(api.transferOut)} disabled={transferring}>
+          轉出資料
+        </button>
+        <button type="button" onclick={() => transfer(api.transferIn)} disabled={transferring}>
+          轉入資料
+        </button>
+      </div>
+      {#if info}
+        <p class="info" role="status">{info}</p>
+      {/if}
     </section>
   {/if}
 </main>
@@ -247,6 +274,18 @@
     border: 1px solid var(--line);
     border-radius: 4px;
     background: var(--surface);
+  }
+  h3 {
+    font-size: 0.9rem;
+    margin: 12px 0 6px;
+  }
+  .actions {
+    display: flex;
+    gap: 6px;
+  }
+  .info {
+    color: var(--muted);
+    overflow-wrap: anywhere;
   }
   .path {
     color: var(--muted);
