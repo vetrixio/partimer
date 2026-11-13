@@ -220,6 +220,8 @@ export const api = {
   deleteEntry: (id: Id) => invoke<void>("delete_entry", { id }),
   /** Opens a save dialog; false when the user cancels. */
   exportCsv: (query: RecordsQuery) => invoke<boolean>("export_csv", { query }),
+  /** Opens a file dialog and imports into an empty session; null when cancelled, else a message. */
+  importCsv: () => invoke<string | null>("import_csv"),
 
   // catalog
   getCatalog: () => invoke<CatalogView>("get_catalog"),
@@ -241,6 +243,9 @@ export const api = {
   setHourlyReminder: (enabled: boolean) =>
     invoke<SettingsView>("set_hourly_reminder", { enabled }),
   openDataFolder: () => invoke<void>("open_data_folder"),
+  /** Native dialogs on the Rust side; null when the user cancels, else a success message. */
+  transferOut: () => invoke<string | null>("transfer_out"),
+  transferIn: () => invoke<string | null>("transfer_in"),
 
   // windows
   openWindow: (kind: WindowKind, entryId: Id | null = null) =>

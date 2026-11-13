@@ -118,6 +118,18 @@
     }
   }
 
+  async function importCsv() {
+    exporting = true;
+    message = null;
+    try {
+      message = await api.importCsv();
+    } catch (e) {
+      message = String(e);
+    } finally {
+      exporting = false;
+    }
+  }
+
   function afterDialog() {
     dialog = null;
     void load();
@@ -201,6 +213,7 @@
     <span class="spacer"></span>
     <button type="button" onclick={() => openEntry(null)}>新增紀錄</button>
     <button type="button" onclick={exportCsv} disabled={exporting}>匯出 CSV</button>
+    <button type="button" onclick={importCsv} disabled={exporting}>匯入 CSV</button>
   </header>
 
   {#if message}
