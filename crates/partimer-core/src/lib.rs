@@ -9,6 +9,7 @@ pub mod storage;
 #[cfg(test)]
 mod testutil;
 pub mod timer;
+pub mod transfer;
 pub mod views;
 pub mod zone;
 
