@@ -10,6 +10,7 @@ use crate::model::{Data, to_json};
 use crate::storage::{self, Fs, SnapshotKind};
 use crate::timer;
 use crate::transfer::{counts, date_range, is_empty, parse_transfer};
+use crate::views::NoticeKind;
 
 pub(crate) const SAVE_BLOCKED_MOVE: &str =
     "資料檔目前不能寫入（由較新版建立或讀不到），為避免覆蓋，這次開啟期間不能轉入或匯入。";
@@ -37,7 +38,14 @@ impl<F: Fs> Session<F> {
     pub(super) fn snapshot_data(&self, now: DateTime<Utc>) -> Data {
         let mut copy = self.data.clone();
         if let Some(e) = self.running() {
-            let _ = timer::stop(&mut copy, &e.title, &e.content, now);
+            // Unsaved panel text counts, unless it conflicts with an edit made elsewhere
+            // (same rule as quitting).
+            let (title, content) = if self.draft_conflict {
+                (e.title.as_str(), e.content.as_str())
+            } else {
+                (self.draft.title.as_str(), self.draft.content.as_str())
+            };
+            let _ = timer::stop(&mut copy, title, content, now);
         }
         copy
     }
@@ -57,6 +65,9 @@ impl<F: Fs> Session<F> {
     }
 
     pub fn prepare_transfer_in(&self, bytes: &[u8]) -> Result<TransferInPlan, String> {
+        if self.save_blocked {
+            return Err(SAVE_BLOCKED_MOVE.to_string());
+        }
         let data = parse_transfer(bytes).map_err(msg)?;
         let c = counts(&data);
         let mut text = format!(
@@ -109,6 +120,14 @@ impl<F: Fs> Session<F> {
         };
         let entries = counts(&plan.data).entries;
         self.data = plan.data;
+        // Load-time notices described the old data; only a failed save still applies.
+        self.notices.retain(|n| {
+            matches!(
+                n.kind,
+                NoticeKind::SaveError | NoticeKind::Unreadable | NoticeKind::NewerVersion
+            )
+        });
+        self.report_quarantined(now);
         self.replace_draft(self.selected_title(), String::new());
         self.reset_reminders(now);
         self.persist(now);

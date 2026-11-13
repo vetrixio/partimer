@@ -171,7 +171,13 @@ fn transfer_in_refused_when_save_blocked() {
     d.version = 2;
     let mut s = open(seed(&d), at(0));
     let bytes = open(seeded(), at(0)).transfer_out(at(0)).unwrap();
+    assert_eq!(
+        s.prepare_transfer_in(&bytes).unwrap_err(),
+        SAVE_BLOCKED_MOVE.to_string()
+    );
+    s.save_blocked = false;
     let plan = s.prepare_transfer_in(&bytes).unwrap();
+    s.save_blocked = true;
     assert_eq!(
         s.transfer_in(plan, at(1)),
         Err(SAVE_BLOCKED_MOVE.to_string())
@@ -251,6 +257,62 @@ fn snapshot_while_running_can_be_transferred_back_in() {
 }
 
 #[test]
+fn snapshot_keeps_unsaved_draft_of_running_entry() {
+    let a = open(seeded(), at(0));
+    let mut b = open(seed(&other_data()), at(0));
+    b.start("p9", "舊標題", "舊內容", at(0)).unwrap();
+    let id = running_id(&b, at(1));
+    b.set_draft("新標題".into(), "新內容".into(), b.draft.generation);
+    transfer(&a, &mut b, at(H));
+    let snaps = snapshot_names(&b);
+    let snap = parse_data(&b.fs.get(&snaps[0]).unwrap()).unwrap();
+    let e = snap.entries.iter().find(|e| e.id == id).expect("entry");
+    assert_eq!((e.title.as_str(), e.content.as_str()), ("新標題", "新內容"));
+}
+
+#[test]
+fn snapshot_keeps_stored_text_with_draft_conflict() {
+    let a = open(seeded(), at(0));
+    let mut b = open(seed(&other_data()), at(0));
+    b.start("p9", "舊標題", "舊內容", at(0)).unwrap();
+    let id = running_id(&b, at(1));
+    b.set_draft("打字中".into(), "打字中內容".into(), b.draft.generation);
+    let mut f = b.entry_form(&id).unwrap();
+    f.title = "別處改的".into();
+    b.save_entry(Some(&id), f, at(60)).unwrap();
+    assert!(b.draft_conflict);
+    transfer(&a, &mut b, at(H));
+    let snaps = snapshot_names(&b);
+    let snap = parse_data(&b.fs.get(&snaps[0]).unwrap()).unwrap();
+    let e = snap.entries.iter().find(|e| e.id == id).expect("entry");
+    assert_eq!(
+        (e.title.as_str(), e.content.as_str()),
+        ("別處改的", "舊內容")
+    );
+}
+
+#[test]
+fn transfer_in_drops_stale_load_notices() {
+    let mut d = base_data();
+    d.quarantined_entries.push(json!({"id": "bad"}));
+    let mut b = open(seed(&d), at(0));
+    assert!(notice(&b, NoticeKind::Info).is_some());
+    let a = open(seeded(), at(0));
+    transfer(&a, &mut b, at(10));
+    assert!(notice(&b, NoticeKind::Info).is_none());
+}
+
+#[test]
+fn transfer_in_reports_quarantine_of_incoming_data() {
+    let a = open(seed(&rich_data()), at(0));
+    let mut b = open(seeded(), at(0));
+    assert!(notice(&b, NoticeKind::Info).is_none());
+    transfer(&a, &mut b, at(10));
+    let n = notice(&b, NoticeKind::Info).expect("quarantine notice");
+    assert!(n.message.contains("1 筆資料格式不正確"));
+}
+
+#[test]
 fn snapshot_while_paused_ends_at_pause_start() {
     let a = open(seeded(), at(0));
     let mut b = open(seed(&other_data()), at(0));
@@ -266,6 +328,53 @@ fn snapshot_while_paused_ends_at_pause_start() {
 }
 
 // ---- CSV import ----
+
+fn round_trip_zone(zone: &str, month: (i32, u32), start: &str, end: &str) {
+    let mut d = base_data();
+    d.entries.clear();
+    d.entries.push(entry("r1", "p1", start, Some(end), "跨日"));
+    let a = open_in(seed(&d), zone, at(0));
+    let files = vec![("x.csv".to_string(), month_csv(&a, month.0, month.1))];
+    let mut b = open_in(MemFs::new(), zone, at(0));
+    let plan = b.prepare_csv_import(&files).unwrap();
+    b.import_csv(plan, at(10)).unwrap();
+    assert_eq!(b.data.entries.len(), 1);
+    let (got, orig) = (&b.data.entries[0], &d.entries[0]);
+    assert_eq!((got.start, got.end), (orig.start, orig.end));
+}
+
+#[test]
+fn csv_round_trip_across_month_end() {
+    // 10/31 23:00 -> 11/01 01:00 in Asia/Taipei.
+    round_trip_zone(
+        "Asia/Taipei",
+        (2026, 10),
+        "2026-10-31T15:00:00Z",
+        "2026-10-31T17:00:00Z",
+    );
+}
+
+#[test]
+fn csv_round_trip_across_fall_back() {
+    // New York 2026-11-01 00:30 EDT -> 02:30 EST (180 minutes).
+    round_trip_zone(
+        "America/New_York",
+        (2026, 11),
+        "2026-11-01T04:30:00Z",
+        "2026-11-01T07:30:00Z",
+    );
+}
+
+#[test]
+fn csv_round_trip_across_spring_forward() {
+    // New York 2026-03-08 01:30 EST -> 03:30 EDT (60 minutes).
+    round_trip_zone(
+        "America/New_York",
+        (2026, 3),
+        "2026-03-08T06:30:00Z",
+        "2026-03-08T07:30:00Z",
+    );
+}
 
 fn month_csv(s: &Session<MemFs>, year: i32, month: u32) -> Vec<u8> {
     s.export_csv(RecordsQuery {
