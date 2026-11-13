@@ -1,6 +1,7 @@
 //! Tauri shell: a thin adapter around `partimer_core::Session`.
 
 mod commands;
+mod moving;
 pub mod platform;
 mod ticker;
 mod tray;
@@ -148,6 +149,9 @@ pub fn run() {
             commands::save_entry,
             commands::delete_entry,
             commands::export_csv,
+            moving::transfer_out,
+            moving::transfer_in,
+            moving::import_csv,
             commands::get_catalog,
             commands::rename_client,
             commands::rename_project,

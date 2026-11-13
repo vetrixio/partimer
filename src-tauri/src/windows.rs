@@ -8,8 +8,8 @@ use std::sync::Mutex;
 
 use chrono::Utc;
 use tauri::{
-    AppHandle, Emitter, LogicalSize, Manager, Monitor, PhysicalPosition, PhysicalRect,
-    PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Monitor, PhysicalPosition,
+    PhysicalRect, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 
 use partimer_core::TimerStatus;
@@ -115,6 +115,40 @@ pub fn open_settings(app: &AppHandle) {
 /// from whatever the user is typing in. A new window built with `focused(false)` does not.
 pub fn ensure_widget(app: &AppHandle) {
     on_worker(app, ensure_widget_now);
+}
+
+/// Move an existing floating clock to where the (just replaced) widget settings say. Moves the
+/// window instead of rebuilding it: destroying and re-creating the same label right away can
+/// collide with the old window that is not released yet.
+pub fn reposition_widget(app: &AppHandle) {
+    on_worker(app, |app| {
+        ensure_widget_now(app)?;
+        let Some(w) = app.get_webview_window(WIDGET) else {
+            return Ok(());
+        };
+        let Some(state) = app.try_state::<AppState>() else {
+            return Ok(());
+        };
+        let saved = {
+            let session = lock(&state.session);
+            let widget = &session.settings().widget;
+            widget
+                .x
+                .zip(widget.y)
+                .map(|(x, y)| PhysicalPosition::new(x, y))
+        };
+        let screens = app
+            .available_monitors()?
+            .iter()
+            .map(Screen::of)
+            .collect::<Vec<_>>();
+        let primary = app.primary_monitor()?.as_ref().map(Screen::of);
+        if let Some((pos, scale)) = widget_position(saved, &screens, primary) {
+            let (x, y) = to_logical(pos, scale);
+            w.set_position(LogicalPosition::new(x, y))?;
+        }
+        Ok(())
+    });
 }
 
 fn on_worker(app: &AppHandle, f: impl FnOnce(&AppHandle) -> tauri::Result<()> + Send + 'static) {
