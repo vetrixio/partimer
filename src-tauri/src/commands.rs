@@ -288,6 +288,11 @@ pub async fn export_csv(
 
 /// Chinese reason first, the raw (often English) io error in parentheses.
 pub(crate) fn export_error(e: &std::io::Error) -> String {
+    write_error("匯出失敗", e)
+}
+
+/// Like `export_error` with the failed action's name as the prefix (e.g. 「轉出失敗」).
+pub(crate) fn write_error(prefix: &str, e: &std::io::Error) -> String {
     use std::io::ErrorKind;
     let reason = match e.kind() {
         ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem => "沒有權限寫入這個位置",
@@ -295,7 +300,7 @@ pub(crate) fn export_error(e: &std::io::Error) -> String {
         ErrorKind::NotFound => "找不到這個資料夾",
         _ => "無法寫入檔案",
     };
-    format!("匯出失敗：{reason}（{e}）")
+    format!("{prefix}：{reason}（{e}）")
 }
 
 // ---- catalog ----
@@ -562,6 +567,15 @@ mod tests {
         assert_eq!(export_error(&e), format!("匯出失敗：磁碟空間不足（{e}）"));
         let e = std::io::Error::other("boom");
         assert_eq!(export_error(&e), "匯出失敗：無法寫入檔案（boom）");
+    }
+
+    #[test]
+    fn write_error_uses_the_given_prefix() {
+        let e = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            write_error("轉出失敗", &e),
+            format!("轉出失敗：沒有權限寫入這個位置（{e}）")
+        );
     }
 
     #[test]
