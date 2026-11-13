@@ -18,6 +18,9 @@ pub enum Action {
     Restore,
     Switch,
     AutoStop,
+    TransferOut,
+    TransferIn,
+    ImportCsv,
 }
 
 impl Action {
@@ -34,6 +37,9 @@ impl Action {
             Action::Restore => "RESTORE",
             Action::Switch => "SWITCH",
             Action::AutoStop => "AUTO_STOP",
+            Action::TransferOut => "TRANSFER_OUT",
+            Action::TransferIn => "TRANSFER_IN",
+            Action::ImportCsv => "IMPORT_CSV",
         }
     }
 }
@@ -196,5 +202,12 @@ mod tests {
         fs.fail_appends.set(false);
         append(&fs, &paths, "c\n");
         assert_eq!(fs.get(&paths.activity_log()).unwrap(), b"a\nc\n");
+    }
+
+    #[test]
+    fn transfer_and_import_actions_render_upper_snake() {
+        assert_eq!(Action::TransferOut.as_str(), "TRANSFER_OUT");
+        assert_eq!(Action::TransferIn.as_str(), "TRANSFER_IN");
+        assert_eq!(Action::ImportCsv.as_str(), "IMPORT_CSV");
     }
 }
