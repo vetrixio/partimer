@@ -2623,7 +2623,7 @@ dependencies = [
 
 [[package]]
 name = "partimer"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "chrono",
  "partimer-core",
@@ -2640,7 +2640,7 @@ dependencies = [
 
 [[package]]
 name = "partimer-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "chrono",
  "chrono-tz",
