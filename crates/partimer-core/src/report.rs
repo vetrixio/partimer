@@ -6,7 +6,7 @@ use crate::duration::{effective_seconds, hours_decimal, round_minutes};
 use crate::model::{Client, Data, Entry, Id, Project};
 use crate::zone::{LocalZone, format_hhmm, local_date};
 
-const CSV_HEADER: &str = "日期,客戶,專案,開始,結束,分鐘,小時,暫停分鐘,標題,內容";
+pub(crate) const CSV_HEADER: &str = "日期,客戶,專案,開始,結束,分鐘,小時,暫停分鐘,標題,內容";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Filter {
