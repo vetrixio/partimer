@@ -14,6 +14,7 @@
   let message = $state<string | null>(null);
   let busy = $state(false);
   let info = $state<string | null>(null);
+  let transferError = $state<string | null>(null);
   let transferring = $state(false);
   /** Slider value while dragging; null when it follows the stored value. */
   let dragOpacity = $state<number | null>(null);
@@ -79,6 +80,8 @@
 
   async function openFolder() {
     message = null;
+    info = null;
+    transferError = null;
     try {
       await api.openDataFolder();
     } catch (e) {
@@ -90,10 +93,11 @@
     transferring = true;
     message = null;
     info = null;
+    transferError = null;
     try {
       info = await task();
     } catch (e) {
-      message = String(e);
+      transferError = String(e);
     } finally {
       transferring = false;
     }
@@ -216,6 +220,9 @@
           轉入資料
         </button>
       </div>
+      {#if transferError}
+        <p class="error" role="alert">{transferError}</p>
+      {/if}
       {#if info}
         <p class="info" role="status">{info}</p>
       {/if}
