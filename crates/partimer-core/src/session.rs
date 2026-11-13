@@ -1204,7 +1204,7 @@ impl<F: Fs> Session<F> {
 
 mod moving;
 
-pub use moving::TransferInPlan;
+pub use moving::{CsvImportPlan, TransferInPlan};
 
 #[cfg(test)]
 mod tests;
