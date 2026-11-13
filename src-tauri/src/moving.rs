@@ -7,7 +7,7 @@ use tauri::{AppHandle, State};
 use tauri_plugin_dialog::{DialogExt as _, MessageDialogButtons, MessageDialogKind};
 
 use crate::AppState;
-use crate::commands::{changed, export_error, session, settings_changed};
+use crate::commands::{changed, session, settings_changed, write_error};
 use crate::windows::reposition_widget;
 
 type Res<T> = Result<T, String>;
@@ -52,7 +52,7 @@ pub async fn transfer_out(app: AppHandle, state: State<'_, AppState>) -> Res<Opt
     let path = picked
         .into_path()
         .map_err(|e| format!("無法使用這個位置（{e}）"))?;
-    std::fs::write(&path, bytes).map_err(|e| export_error(&e))?;
+    std::fs::write(&path, bytes).map_err(|e| write_error("轉出失敗", &e))?;
     session(&state).note_transfer_out(Utc::now());
     Ok(Some(format!("已轉出到 {}", file_name_of(&path))))
 }
