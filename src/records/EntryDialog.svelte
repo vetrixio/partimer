@@ -6,6 +6,7 @@
   import { onMount } from "svelte";
   import { ask } from "@tauri-apps/plugin-dialog";
   import { api, type CatalogView, type EntryForm, type Id } from "../lib/api";
+  import DateTimeInput from "../lib/DateTimeInput.svelte";
   import { toLocalInput } from "../lib/time";
 
   interface Props {
@@ -47,6 +48,14 @@
   }
 
   async function save() {
+    if (!form.startLocal) {
+      error = "請填開始的日期與時間（24 小時制，例如 09:30）";
+      return;
+    }
+    if (!form.stillRunning && !form.endLocal) {
+      error = "請填結束的日期與時間（24 小時制，例如 17:45）";
+      return;
+    }
     const minutes = pausedMinutes();
     if (minutes === null) {
       error = "暫停分鐘請填整數";
@@ -121,20 +130,14 @@
       </label>
 
       <div class="row">
-        <label>
+        <div class="field">
           <span>開始</span>
-          <input type="datetime-local" bind:value={form.startLocal} required />
-        </label>
-        <label>
+          <DateTimeInput label="開始" bind:value={form.startLocal} />
+        </div>
+        <div class="field">
           <span>結束</span>
-          <input
-            type="datetime-local"
-            value={form.endLocal ?? ""}
-            oninput={(e) => (form.endLocal = e.currentTarget.value || null)}
-            disabled={form.stillRunning}
-            required={!form.stillRunning}
-          />
-        </label>
+          <DateTimeInput label="結束" bind:value={form.endLocal} disabled={form.stillRunning} />
+        </div>
       </div>
 
       {#if canStayRunning}
@@ -207,18 +210,20 @@
     margin: 0;
     font-size: 1.1rem;
   }
-  label {
+  label,
+  .field {
     display: flex;
     flex-direction: column;
     gap: 2px;
   }
-  label > span {
+  label > span,
+  .field > span {
     font-size: 0.85em;
     color: var(--muted);
   }
   .row {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 10px;
   }
   .check {

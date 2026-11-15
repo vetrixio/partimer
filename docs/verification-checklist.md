@@ -217,7 +217,7 @@ Set-up: create at least two clients with two projects each (one with a few entri
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
-- **P17** 12-hour prompt (e.g. set the clock or run a timer overnight): the panel shows 「已經計時超過 12 小時，是不是忘了停？」 with a date-time field preset to start + 12 h; 用這個時間結束 ends the entry at that time (check in 紀錄) with the text from the fields; a time in the future shows 「結束時間不能晚於現在」. 沒忘，繼續計時 hides the prompt until 24 h.
+- **P17** 12-hour prompt (e.g. set the clock or run a timer overnight): the panel shows 「已經計時超過 12 小時，是不是忘了停？」 with a date field and a 24-hour time field (HH:MM, never 上午/下午) preset to start + 12 h; 用這個時間結束 ends the entry at that time (check in 紀錄) with the text from the fields; a time in the future shows 「結束時間不能晚於現在」. 沒忘，繼續計時 hides the prompt until 24 h.
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
@@ -315,6 +315,10 @@ Set-up: a few entries this month and last month across two clients, one entry th
   - [ ] Windows
   - [ ] Ubuntu
 - **R20** 匯入 CSV (next to 匯出 CSV) on a fresh install with the CSV files of several months selected at once: the confirm box shows the right number of entries, and the panel and records window update immediately. With entries already present it shows the hint to use 「轉入資料」 instead and imports nothing.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **R21** Time fields in 編輯紀錄／新增紀錄 (and the 12-hour prompt) are a date picker plus a 24-hour HH:MM text field even with a 12-hour system clock (Windows/macOS set to 上午/下午): typing `930` or `9:30` becomes `09:30` when leaving the field, `17:45` saves as 17:45 (check the list), `25:00` turns the field's border red and 儲存 shows 「請填開始的日期與時間（24 小時制，例如 09:30）」 (or the 結束 message) without saving.
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu

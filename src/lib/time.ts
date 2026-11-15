@@ -36,6 +36,22 @@ export function toLocalInput(d: Date): string {
 }
 
 /**
+ * A typed 24-hour time as `HH:MM`: accepts `9:30`, `09:30`, `930`, and full-width digits or
+ * colon from a Chinese IME. `null` when it is not a valid 24-hour time.
+ */
+export function parseHm(text: string): string | null {
+  const t = text
+    .trim()
+    .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .replace("：", ":");
+  const m = /^(\d{1,2}):(\d{2})$/.exec(t) ?? /^(\d{1,2})(\d{2})$/.exec(t);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const mi = Number(m[2]);
+  return h <= 23 && mi <= 59 ? `${pad(h)}:${pad(mi)}` : null;
+}
+
+/**
  * Local `YYYY-MM-DDTHH:MM` plus `hours` of real time, in the same format (so a DST change in
  * between is accounted for). `null` when the input is not in that format.
  */
