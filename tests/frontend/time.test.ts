@@ -8,6 +8,7 @@ import {
   formatMinutes,
   liveSeconds,
   localDateKey,
+  parseHm,
   toLocalInput,
 } from "../../src/lib/time.ts";
 
@@ -51,4 +52,21 @@ test("formatMinutes matches the backend's format_hm", () => {
   assert.equal(formatMinutes(60), "1h 0m");
   assert.equal(formatMinutes(90), "1h 30m");
   assert.equal(formatMinutes(-3), "0m");
+});
+
+test("parseHm reads 24-hour times and normalises them to HH:MM", () => {
+  assert.equal(parseHm("09:30"), "09:30");
+  assert.equal(parseHm("9:30"), "09:30");
+  assert.equal(parseHm(" 17:05 "), "17:05");
+  assert.equal(parseHm("930"), "09:30");
+  assert.equal(parseHm("2359"), "23:59");
+  assert.equal(parseHm("0:00"), "00:00");
+  // Full-width digits and colon from a Chinese IME.
+  assert.equal(parseHm("１４：１５"), "14:15");
+});
+
+test("parseHm rejects out-of-range and malformed times", () => {
+  for (const bad of ["", "24:00", "12:60", "9:3", "12", "123456", "9.30", "下午3:00", "3:00 PM", "-1:00"]) {
+    assert.equal(parseHm(bad), null, bad);
+  }
 });

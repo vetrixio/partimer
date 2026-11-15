@@ -12,6 +12,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { api, onStateChanged, type Id, type Notice, type PanelState } from "../lib/api";
   import { autosize } from "../lib/autosize";
+  import DateTimeInput from "../lib/DateTimeInput.svelte";
   import { addHoursLocal, formatHms, liveSeconds, localDateKey } from "../lib/time";
   import DraftFields from "./DraftFields.svelte";
   import ProjectPicker from "./ProjectPicker.svelte";
@@ -22,7 +23,8 @@
 
   let root: HTMLElement;
   let fields: ReturnType<typeof DraftFields> | undefined = $state();
-  let endEl: HTMLInputElement | undefined = $state();
+  /** The 12-hour prompt's chosen end, local `YYYY-MM-DDTHH:MM` ("" while incomplete). */
+  let promptEnd = $state("");
 
   let panel = $state<PanelState | null>(null);
   /** `Date.now()` when `panel` arrived: the base for the per-second display. */
@@ -55,6 +57,10 @@
   const promptStart = $derived(
     panel?.running ? `${panel.running.date}T${panel.running.startHhmm}` : null,
   );
+  // Preset to start + 12 h again whenever the running entry or its start changes.
+  $effect.pre(() => {
+    promptEnd = promptStart ? (addHoursLocal(promptStart, 12) ?? "") : "";
+  });
 
   /** Returns whether `next` was taken. */
   function apply(next: PanelState, seq: number): boolean {
@@ -193,9 +199,9 @@
   }
 
   function stopAtChosen() {
-    const end = endEl?.value ?? "";
+    const end = promptEnd;
     if (!end) {
-      error = "請選擇結束時間";
+      error = "請填結束的日期與時間（24 小時制，例如 08:30）";
       return;
     }
     void command((v) => api.stopAt(v.title, v.content, end));
@@ -292,15 +298,11 @@
         {#if panel.longRunningPrompt && panel.running && promptStart}
           <div class="notice long" role="alert">
             <p>已經計時超過 12 小時，是不是忘了停？</p>
-            {#key panel.running.id}
-              <input
-                bind:this={endEl}
-                type="datetime-local"
-                aria-label="實際結束時間"
-                value={addHoursLocal(promptStart, 12) ?? ""}
-                min={promptStart}
-              />
-            {/key}
+            <DateTimeInput
+              label="實際結束"
+              bind:value={promptEnd}
+              minDate={panel.running.date}
+            />
             <div class="row">
               <button type="button" class="primary" disabled={busy} onclick={stopAtChosen}>
                 用這個時間結束
