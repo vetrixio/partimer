@@ -469,9 +469,13 @@ Set-up: at least three projects pinned in 設定 → 客戶與專案, across two
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
-- **T8** Stale menu (Ubuntu only: macOS and Windows menus are rebuilt while closed, so no stale menu can be clicked): open the menu while timing, press STOP in the panel (or with the global shortcut), then click 停止計時 in the still-open menu: nothing happens and no notification appears. Likewise click a pinned project that is already the running one, or 暫停 while already paused: nothing happens. Clicking a pinned project in a stale 「沒在計時」 menu while another project is running shows the switch confirm instead of starting a second timer.
+- **T8** Stale menu (easiest on Ubuntu, where an open menu stays as it was; on macOS and Windows, change the state and click the old row within about a second, or keep the menu open while using the global shortcut if the platform allows it, and note what happens): open the menu while timing, press STOP in the panel (or with the global shortcut), then click 停止計時 in the still-open menu: nothing happens and no notification appears. Likewise click a pinned project that is already the running one, or 暫停 while already paused: nothing happens. Clicking a pinned project in a stale 「沒在計時」 menu while another project is running shows the switch confirm instead of starting a second timer.
+  - [ ] macOS
+  - [ ] Windows
   - [ ] Ubuntu
-- **T9** Failures (Ubuntu only: macOS and Windows menus are rebuilt while closed, so no stale menu can be clicked): archive or delete a pinned project (in 設定) and click its row in a menu opened before that: a system notification with the error text shows, and the menu is rebuilt with the real state. A normal success shows no notification.
+- **T9** Failures (easiest on Ubuntu, where an open menu stays as it was; on macOS and Windows, change the state and click the old row within about a second, or keep the menu open while using the global shortcut if the platform allows it, and note what happens): archive or delete a pinned project (in 設定) and click its row in a menu opened before that: a system notification with the error text shows, and the menu is rebuilt with the real state. A normal success shows no notification.
+  - [ ] macOS
+  - [ ] Windows
   - [ ] Ubuntu
 - **T10** Project and client names containing `&` and `_` (e.g. 「A&B_客戶」／「x_y&z」) show literally in the menu rows and the first status row, with no underlined letter or missing character. A name over 20 characters is shown shortened with `…`. (Ubuntu GTK treats `_` as a mnemonic, muda treats `&`: check on every platform.)
   - [ ] macOS
