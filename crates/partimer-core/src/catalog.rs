@@ -6,6 +6,7 @@ use crate::duration::{effective_seconds, round_minutes};
 use crate::model::{Client, Data, Entry, Id, Project, new_id};
 
 pub const COLOR_COUNT: u8 = 8;
+pub const PIN_LIMIT: usize = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CatalogError {
@@ -21,6 +22,10 @@ pub enum CatalogError {
     InvalidColor,
     #[error("找不到這個項目")]
     NotFound,
+    #[error("最多釘選 5 個，請先取消一個")]
+    PinLimit,
+    #[error("已封存的專案不能釘選")]
+    PinArchived,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -95,6 +100,7 @@ pub fn add_project(
         name: project_name.to_string(),
         color,
         archived: false,
+        pinned: false,
     });
     Ok(id)
 }
@@ -154,6 +160,11 @@ pub fn set_client_archived(data: &mut Data, id: &str, archived: bool) -> Result<
         .find(|c| c.id == id)
         .ok_or(CatalogError::NotFound)?;
     c.archived = archived;
+    if archived {
+        for p in data.projects.iter_mut().filter(|p| p.client_id == id) {
+            p.pinned = false;
+        }
+    }
     Ok(())
 }
 
@@ -164,6 +175,43 @@ pub fn set_project_archived(data: &mut Data, id: &str, archived: bool) -> Result
         .find(|p| p.id == id)
         .ok_or(CatalogError::NotFound)?;
     p.archived = archived;
+    if archived {
+        p.pinned = false;
+    }
+    Ok(())
+}
+
+/// Pinned projects that are still visible: neither the project nor its client
+/// is archived. Same order as `active_groups`; not capped.
+pub fn effective_pins(data: &Data) -> Vec<&Project> {
+    active_groups(data)
+        .into_iter()
+        .flat_map(|(_, ps)| ps)
+        .filter(|p| p.pinned)
+        .collect()
+}
+
+pub fn set_project_pinned(data: &mut Data, id: &str, pinned: bool) -> Result<(), CatalogError> {
+    let p = data
+        .projects
+        .iter()
+        .find(|p| p.id == id)
+        .ok_or(CatalogError::NotFound)?;
+    if pinned && !p.pinned {
+        let client_archived = data
+            .clients
+            .iter()
+            .any(|c| c.id == p.client_id && c.archived);
+        if p.archived || client_archived {
+            return Err(CatalogError::PinArchived);
+        }
+        if effective_pins(data).len() >= PIN_LIMIT {
+            return Err(CatalogError::PinLimit);
+        }
+    }
+    if let Some(p) = data.projects.iter_mut().find(|p| p.id == id) {
+        p.pinned = pinned;
+    }
     Ok(())
 }
 
@@ -659,5 +707,162 @@ mod tests {
         );
         assert_eq!(CatalogError::InvalidColor.to_string(), "顏色不正確");
         assert_eq!(CatalogError::NotFound.to_string(), "找不到這個項目");
+    }
+
+    fn pin_data(n: usize) -> Data {
+        let mut d = Data::default();
+        for i in 0..n {
+            add_project(&mut d, "客戶", &format!("專案{i}")).unwrap();
+        }
+        d
+    }
+
+    fn pid(d: &Data, name: &str) -> Id {
+        d.projects
+            .iter()
+            .find(|p| p.name == name)
+            .unwrap()
+            .id
+            .clone()
+    }
+
+    #[test]
+    fn pin_limit_is_five() {
+        let mut d = pin_data(6);
+        let ids: Vec<Id> = d.projects.iter().map(|p| p.id.clone()).collect();
+        for id in &ids[..5] {
+            assert_eq!(set_project_pinned(&mut d, id, true), Ok(()));
+        }
+        assert_eq!(
+            set_project_pinned(&mut d, &ids[5], true),
+            Err(CatalogError::PinLimit)
+        );
+        assert_eq!(
+            CatalogError::PinLimit.to_string(),
+            "最多釘選 5 個，請先取消一個"
+        );
+    }
+
+    #[test]
+    fn cannot_pin_archived() {
+        let mut d = pin_data(1);
+        add_project(&mut d, "別家", "乙").unwrap();
+        let a = pid(&d, "專案0");
+        let b = pid(&d, "乙");
+        set_project_archived(&mut d, &a, true).unwrap();
+        assert_eq!(
+            set_project_pinned(&mut d, &a, true),
+            Err(CatalogError::PinArchived)
+        );
+        let cid = d
+            .projects
+            .iter()
+            .find(|p| p.id == b)
+            .unwrap()
+            .client_id
+            .clone();
+        set_client_archived(&mut d, &cid, true).unwrap();
+        assert_eq!(
+            set_project_pinned(&mut d, &b, true),
+            Err(CatalogError::PinArchived)
+        );
+        assert_eq!(
+            CatalogError::PinArchived.to_string(),
+            "已封存的專案不能釘選"
+        );
+    }
+
+    #[test]
+    fn pin_unknown_id_is_not_found() {
+        let mut d = pin_data(1);
+        assert_eq!(
+            set_project_pinned(&mut d, "nope", true),
+            Err(CatalogError::NotFound)
+        );
+    }
+
+    #[test]
+    fn pinning_pinned_project_is_ok_even_at_limit() {
+        let mut d = pin_data(5);
+        let ids: Vec<Id> = d.projects.iter().map(|p| p.id.clone()).collect();
+        for id in &ids {
+            set_project_pinned(&mut d, id, true).unwrap();
+        }
+        assert_eq!(set_project_pinned(&mut d, &ids[0], true), Ok(()));
+    }
+
+    #[test]
+    fn unpin_always_ok() {
+        let mut d = pin_data(1);
+        d.projects[0].archived = true;
+        d.projects[0].pinned = true;
+        let id = d.projects[0].id.clone();
+        assert_eq!(set_project_pinned(&mut d, &id, false), Ok(()));
+        assert!(!d.projects[0].pinned);
+    }
+
+    #[test]
+    fn archiving_unpins() {
+        let mut d = pin_data(2);
+        let ids: Vec<Id> = d.projects.iter().map(|p| p.id.clone()).collect();
+        for id in &ids {
+            set_project_pinned(&mut d, id, true).unwrap();
+        }
+        set_project_archived(&mut d, &ids[0], true).unwrap();
+        assert!(!d.projects[0].pinned);
+        assert!(d.projects[1].pinned);
+        let cid = d.clients[0].id.clone();
+        set_client_archived(&mut d, &cid, true).unwrap();
+        assert!(d.projects.iter().all(|p| !p.pinned));
+        set_project_archived(&mut d, &ids[0], false).unwrap();
+        set_client_archived(&mut d, &cid, false).unwrap();
+        assert!(d.projects.iter().all(|p| !p.pinned));
+    }
+
+    #[test]
+    fn effective_pins_skip_archived_and_keep_order() {
+        let mut d = Data::default();
+        add_project(&mut d, "B", "z").unwrap();
+        add_project(&mut d, "A", "y").unwrap();
+        add_project(&mut d, "A", "x").unwrap();
+        add_project(&mut d, "C", "w").unwrap();
+        for p in &mut d.projects {
+            p.pinned = true;
+        }
+        d.projects
+            .iter_mut()
+            .find(|p| p.name == "x")
+            .unwrap()
+            .archived = true;
+        let c = d.clients.iter_mut().find(|c| c.name == "C").unwrap();
+        c.archived = true;
+        let names: Vec<&str> = effective_pins(&d).iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["y", "z"]);
+    }
+
+    #[test]
+    fn limit_counts_effective_pins_only() {
+        let mut d = pin_data(6);
+        for p in &mut d.projects[..5] {
+            p.archived = true;
+            p.pinned = true;
+        }
+        let id = d.projects[5].id.clone();
+        assert_eq!(set_project_pinned(&mut d, &id, true), Ok(()));
+    }
+
+    #[test]
+    fn over_limit_data_blocks_new_pins() {
+        let mut d = pin_data(7);
+        for p in &mut d.projects[..6] {
+            p.pinned = true;
+        }
+        let new = d.projects[6].id.clone();
+        assert_eq!(
+            set_project_pinned(&mut d, &new, true),
+            Err(CatalogError::PinLimit)
+        );
+        let first = d.projects[0].id.clone();
+        assert_eq!(set_project_pinned(&mut d, &first, false), Ok(()));
     }
 }

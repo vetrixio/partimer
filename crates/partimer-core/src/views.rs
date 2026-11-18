@@ -169,6 +169,7 @@ pub struct ProjectView {
     pub name: String,
     pub color: u8,
     pub archived: bool,
+    pub pinned: bool,
     pub entry_count: usize,
 }
 
@@ -185,6 +186,7 @@ pub struct ClientView {
 #[serde(rename_all = "camelCase")]
 pub struct CatalogView {
     pub clients: Vec<ClientView>,
+    pub pin_limit: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

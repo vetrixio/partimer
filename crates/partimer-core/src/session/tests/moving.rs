@@ -19,6 +19,7 @@ fn other_data() -> Data {
         name: "舊案".into(),
         color: 2,
         archived: false,
+        pinned: false,
     });
     d.entries.push(entry(
         "e9",
