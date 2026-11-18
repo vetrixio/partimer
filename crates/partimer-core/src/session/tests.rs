@@ -1594,3 +1594,4 @@ fn tray_menu_follows_session() {
     };
     assert!(others.is_empty());
 }
+mod tray;
