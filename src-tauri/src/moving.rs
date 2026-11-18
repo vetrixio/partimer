@@ -22,7 +22,7 @@ fn file_name_of(path: &std::path::Path) -> String {
         .unwrap_or_default()
 }
 
-fn confirm(app: &AppHandle, title: &str, text: String, ok: &str) -> bool {
+pub(crate) fn confirm(app: &AppHandle, title: &str, text: String, ok: &str) -> bool {
     app.dialog()
         .message(text)
         .title(title)

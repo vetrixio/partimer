@@ -154,6 +154,7 @@ fn tick(
     }
     let project_name = panel.running.as_ref().map(|e| e.project_name.as_str());
     tray::update(app, panel.status, panel.elapsed_seconds, project_name);
+    tray::refresh_menu(app);
 
     let snapshot = Snapshot {
         status: panel.status,
@@ -183,7 +184,7 @@ fn tick(
 
 /// Show a system notification, asking for permission the first time it is needed. When the
 /// user said no, the reminder is silently skipped (the panel still shows the 12-hour prompt).
-fn notify(app: &AppHandle, body: &str) {
+pub(crate) fn notify(app: &AppHandle, body: &str) {
     let notification = app.notification();
     let allowed = match notification.permission_state() {
         Ok(PermissionState::Granted) => true,
