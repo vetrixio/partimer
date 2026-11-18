@@ -1573,3 +1573,24 @@ fn catalog_view_shows_pins() {
             .pinned
     );
 }
+
+#[test]
+fn tray_menu_follows_session() {
+    use crate::tray_menu::{PinItem, TrayMenu};
+    let mut s = open(seeded(), at(0));
+    s.set_project_pinned("p2", true, at(1)).unwrap();
+    assert_eq!(
+        s.tray_menu(),
+        TrayMenu::Idle {
+            pins: vec![PinItem {
+                project_id: "p2".into(),
+                label: "王小明・設計".into()
+            }]
+        }
+    );
+    s.start("p2", "", "", at(2)).unwrap();
+    let TrayMenu::Active { others, .. } = s.tray_menu() else {
+        panic!("not active")
+    };
+    assert!(others.is_empty());
+}

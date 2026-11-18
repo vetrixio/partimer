@@ -11,6 +11,7 @@ pub mod storage;
 mod testutil;
 pub mod timer;
 pub mod transfer;
+pub mod tray_menu;
 pub mod views;
 pub mod zone;
 

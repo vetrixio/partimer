@@ -735,6 +735,10 @@ impl<F: Fs> Session<F> {
         }
     }
 
+    pub fn tray_menu(&self) -> crate::tray_menu::TrayMenu {
+        crate::tray_menu::tray_menu(&self.data)
+    }
+
     pub fn data_dir(&self) -> &Path {
         &self.paths.dir
     }
