@@ -2,17 +2,24 @@
 //!
 //! `update` and `advance_frame` are called from the ticker thread only (never while the
 //! session lock is held); the tray API forwards each call to the main thread itself.
+//! `refresh_menu` is called from the ticker and after each menu action, also without the
+//! session lock held.
 
 use std::sync::Mutex;
 
-use partimer_core::TimerStatus;
+use std::thread;
+
+use chrono::{DateTime, Utc};
+use partimer_core::session::TrayPick;
+use partimer_core::tray_menu::{PinItem, TrayMenu};
+use partimer_core::{RealFs, Session, TimerStatus};
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, PhysicalRect, Rect};
+use tauri::{AppHandle, Manager, PhysicalRect, Rect, Wry};
 
-use crate::lock;
 use crate::windows::{self, Origin};
+use crate::{AppState, commands, lock, moving, ticker};
 
 const TRAY_ID: &str = "partimer";
 const APP_NAME: &str = "打工人計時器";
@@ -21,6 +28,14 @@ const MENU_PANEL: &str = "open-panel";
 const MENU_RECORDS: &str = "records";
 const MENU_SETTINGS: &str = "settings";
 const MENU_QUIT: &str = "quit";
+const MENU_PIN_PREFIX: &str = "pin:";
+const MENU_PAUSE: &str = "pause";
+const MENU_RESUME: &str = "resume";
+const MENU_STOP: &str = "stop";
+// Disabled rows; never clicked.
+const MENU_HINT: &str = "hint";
+const MENU_STATUS: &str = "status";
+const MENU_OTHERS: &str = "others";
 
 /// 32px pictures; on macOS the 64px ones, which the menu bar shows as @2x.
 #[cfg(target_os = "macos")]
@@ -51,6 +66,9 @@ struct TrayState {
     /// Last icon rectangle seen in a tray event, so the menu's 「打開面板」 can open the panel
     /// next to the icon. Never set on Linux (AppIndicator sends no tray events).
     last_rect: Mutex<Option<PhysicalRect<i32, u32>>>,
+    /// The model the tray menu was last built from; the menu is replaced only when it changes.
+    /// Read and written on the main thread only (see `refresh_menu`).
+    menu: Mutex<TrayMenu>,
 }
 
 /// What the tray currently shows, so unchanged values are not pushed again every second.
@@ -124,7 +142,110 @@ fn tooltip_text(status: TimerStatus, elapsed_seconds: i64, project_name: Option<
     }
 }
 
+/// One row of the tray menu, before it becomes a native menu item.
+#[derive(Debug, PartialEq)]
+enum Row {
+    Item {
+        id: String,
+        text: String,
+        enabled: bool,
+    },
+    Separator,
+}
+
+fn item(id: &str, text: String, enabled: bool) -> Row {
+    Row::Item {
+        id: id.to_string(),
+        text,
+        enabled,
+    }
+}
+
+/// A name shown literally: muda reads `&` as a mnemonic marker and `&&` as a plain `&`.
+/// (`_`, GTK's marker, is escaped by muda itself.)
+fn menu_label(label: &str) -> String {
+    label.replace('&', "&&")
+}
+
+fn pin_rows(pins: &[PinItem]) -> impl Iterator<Item = Row> + '_ {
+    pins.iter().map(|p| Row::Item {
+        id: format!("{MENU_PIN_PREFIX}{}", p.project_id),
+        text: format!("▶ {}", menu_label(&p.label)),
+        enabled: true,
+    })
+}
+
+/// The whole tray menu for a model: the timer part (spec §4.1 / §4.2), then the fixed tail.
+fn menu_spec(model: &TrayMenu) -> Vec<Row> {
+    let mut rows = Vec::new();
+    match model {
+        TrayMenu::Idle { pins } if pins.is_empty() => {
+            rows.push(item(
+                MENU_HINT,
+                "到設定釘選專案，就能從這裡開始計時".into(),
+                false,
+            ));
+        }
+        TrayMenu::Idle { pins } => rows.extend(pin_rows(pins)),
+        TrayMenu::Active {
+            paused,
+            current,
+            others,
+        } => {
+            let (status, toggle_id, toggle) = if *paused {
+                ("暫停中", MENU_RESUME, "繼續")
+            } else {
+                ("計時中", MENU_PAUSE, "暫停")
+            };
+            rows.push(item(
+                MENU_STATUS,
+                format!("{status}：{}", menu_label(current)),
+                false,
+            ));
+            rows.push(item(toggle_id, toggle.into(), true));
+            rows.push(item(MENU_STOP, "停止計時".into(), true));
+            if !others.is_empty() {
+                rows.push(Row::Separator);
+                rows.push(item(MENU_OTHERS, "改記其他專案：".into(), false));
+                rows.extend(pin_rows(others));
+            }
+        }
+    }
+    rows.extend([
+        Row::Separator,
+        item(MENU_PANEL, "打開面板".into(), true),
+        item(MENU_RECORDS, "紀錄".into(), true),
+        item(MENU_SETTINGS, "設定".into(), true),
+        Row::Separator,
+        item(MENU_QUIT, "結束".into(), true),
+    ]);
+    rows
+}
+
+fn build_menu(app: &AppHandle, rows: &[Row]) -> tauri::Result<Menu<Wry>> {
+    let menu = Menu::new(app)?;
+    for row in rows {
+        match row {
+            Row::Item { id, text, enabled } => {
+                menu.append(&MenuItem::with_id(app, id, text, *enabled, None::<&str>)?)?
+            }
+            Row::Separator => menu.append(&PredefinedMenuItem::separator(app)?)?,
+        }
+    }
+    Ok(menu)
+}
+
+fn current_menu(app: &AppHandle) -> TrayMenu {
+    app.try_state::<AppState>()
+        .map(|state| lock(&state.session).tray_menu())
+        .unwrap_or(TrayMenu::Idle { pins: Vec::new() })
+}
+
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
+    let model = current_menu(app);
+    // Always attached: it is the right-click menu on macOS / Windows and the only way to
+    // interact on Linux, where AppIndicator never delivers left clicks to the app.
+    let menu = build_menu(app, &menu_spec(&model))?;
     let state = TrayState {
         rest: Image::from_bytes(REST_PNG)?,
         awake: AWAKE_PNG
@@ -138,38 +259,126 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
             tooltip: APP_NAME.to_string(),
         }),
         last_rect: Mutex::new(None),
+        menu: Mutex::new(model),
     };
-
-    // Always attached: it is the right-click menu on macOS / Windows and the only way to
-    // interact on Linux, where AppIndicator never delivers left clicks to the app.
-    let menu = Menu::with_items(
-        app,
-        &[
-            &MenuItem::with_id(app, MENU_PANEL, "打開面板", true, None::<&str>)?,
-            &MenuItem::with_id(app, MENU_RECORDS, "紀錄", true, None::<&str>)?,
-            &MenuItem::with_id(app, MENU_SETTINGS, "設定", true, None::<&str>)?,
-            &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, MENU_QUIT, "結束", true, None::<&str>)?,
-        ],
-    )?;
 
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(state.rest.clone())
         .tooltip(APP_NAME)
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            MENU_PANEL => windows::show_panel(app, menu_origin(app)),
-            MENU_RECORDS => windows::open_records(app, None),
-            MENU_SETTINGS => windows::open_settings(app),
-            MENU_QUIT => app.exit(0),
-            _ => {}
-        })
+        .on_menu_event(|app, event| on_menu_event(app, event.id().as_ref()))
         .on_tray_icon_event(on_tray_event)
         .build(app)?;
 
     app.manage(state);
     Ok(())
+}
+
+/// Runs on the main thread. Timer actions follow the state at the moment of the click, not
+/// the (possibly stale) menu that was clicked.
+fn on_menu_event(app: &AppHandle, id: &str) {
+    match id {
+        MENU_PANEL => windows::show_panel(app, menu_origin(app)),
+        MENU_RECORDS => windows::open_records(app, None),
+        MENU_SETTINGS => windows::open_settings(app),
+        MENU_QUIT => app.exit(0),
+        MENU_PAUSE => act(app, |s, now| s.tray_pause(now)),
+        MENU_RESUME => act(app, |s, now| s.tray_resume(now)),
+        MENU_STOP => act(app, |s, now| s.tray_stop(now)),
+        _ => {
+            if let Some(project_id) = id.strip_prefix(MENU_PIN_PREFIX) {
+                pick(app, project_id);
+            }
+        }
+    }
+}
+
+/// Run one session action under the lock, then report it with the lock released.
+fn act(
+    app: &AppHandle,
+    f: impl FnOnce(&mut Session<RealFs>, DateTime<Utc>) -> Result<bool, String>,
+) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let result = f(&mut lock(&state.session), Utc::now());
+    finish(app, result);
+}
+
+/// `Ok(false)`: the click was stale and nothing changed, which needs no notification.
+fn finish(app: &AppHandle, result: Result<bool, String>) {
+    match result {
+        Ok(true) => commands::changed(app),
+        Ok(false) => {}
+        Err(msg) => ticker::notify(app, &msg),
+    }
+    refresh_menu(app);
+}
+
+fn pick(app: &AppHandle, project_id: &str) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let picked = lock(&state.session).tray_pick(project_id, Utc::now());
+    match picked {
+        Ok(TrayPick::Started) => finish(app, Ok(true)),
+        Ok(TrayPick::NoChange) => finish(app, Ok(false)),
+        Ok(TrayPick::ConfirmSwitch { running_entry }) => {
+            confirm_switch(app, project_id.to_string(), running_entry)
+        }
+        Err(msg) => finish(app, Err(msg)),
+    }
+}
+
+/// The native dialog blocks, so it runs on its own thread (never on the main thread), and the
+/// session lock is not held while it is open. `tray_switch` rechecks the state afterwards.
+fn confirm_switch(app: &AppHandle, project_id: String, running_entry: String) {
+    let app = app.clone();
+    let spawned = thread::Builder::new()
+        .name("partimer-tray-confirm".into())
+        .spawn(move || {
+            let ok = moving::confirm(
+                &app,
+                APP_NAME,
+                "結束目前這筆，改記另一個專案？".into(),
+                "結束並切換",
+            );
+            if ok {
+                act(&app, |s, now| {
+                    s.tray_switch(&project_id, &running_entry, now)
+                });
+            }
+        });
+    if let Err(e) = spawned {
+        eprintln!("partimer: tray: cannot open the confirm dialog: {e}");
+    }
+}
+
+/// Rebuild the tray menu if the timer state or the pins changed since it was last built.
+/// Call without holding the session lock.
+pub fn refresh_menu(app: &AppHandle) {
+    let model = current_menu(app);
+    let handle = app.clone();
+    // Compare, replace and remember on the main thread only, so refreshes from the ticker and
+    // from menu actions are applied one at a time and the remembered model is the shown one.
+    // A model computed earlier but applied later is corrected by the next tick.
+    let sent = app.run_on_main_thread(move || {
+        let (Some(state), Some(tray)) =
+            (handle.try_state::<TrayState>(), handle.tray_by_id(TRAY_ID))
+        else {
+            return;
+        };
+        if *lock(&state.menu) == model {
+            return;
+        }
+        let set = build_menu(&handle, &menu_spec(&model)).and_then(|m| tray.set_menu(Some(m)));
+        match set {
+            Ok(()) => *lock(&state.menu) = model,
+            Err(e) => eprintln!("partimer: tray: {e}"),
+        }
+    });
+    log(sent);
 }
 
 fn on_tray_event(tray: &TrayIcon, event: TrayIconEvent) {
@@ -351,6 +560,120 @@ mod tests {
         assert_eq!(stop.icon_running, Some(false));
         assert_eq!(stop.title, Some(None));
         assert_eq!(shown.frame, 0);
+    }
+
+    fn pin(id: &str, label: &str) -> PinItem {
+        PinItem {
+            project_id: id.into(),
+            label: label.into(),
+        }
+    }
+
+    fn item(id: &str, text: &str, enabled: bool) -> Row {
+        Row::Item {
+            id: id.into(),
+            text: text.into(),
+            enabled,
+        }
+    }
+
+    fn tail() -> Vec<Row> {
+        vec![
+            Row::Separator,
+            item(MENU_PANEL, "打開面板", true),
+            item(MENU_RECORDS, "紀錄", true),
+            item(MENU_SETTINGS, "設定", true),
+            Row::Separator,
+            item(MENU_QUIT, "結束", true),
+        ]
+    }
+
+    fn with_tail(mut rows: Vec<Row>) -> Vec<Row> {
+        rows.extend(tail());
+        rows
+    }
+
+    #[test]
+    fn escape_ampersand() {
+        assert_eq!(menu_label("A&B_c"), "A&&B_c");
+        assert_eq!(menu_label("A&&B"), "A&&&&B");
+    }
+
+    #[test]
+    fn idle_spec_rows() {
+        let model = TrayMenu::Idle {
+            pins: vec![pin("p1", "王小明・官網改版"), pin("p2", "R&D・設計")],
+        };
+        assert_eq!(
+            menu_spec(&model),
+            with_tail(vec![
+                item("pin:p1", "▶ 王小明・官網改版", true),
+                item("pin:p2", "▶ R&&D・設計", true),
+            ])
+        );
+    }
+
+    #[test]
+    fn idle_without_pins_shows_disabled_hint() {
+        let model = TrayMenu::Idle { pins: vec![] };
+        assert_eq!(
+            menu_spec(&model),
+            with_tail(vec![item(
+                "hint",
+                "到設定釘選專案，就能從這裡開始計時",
+                false
+            )])
+        );
+    }
+
+    #[test]
+    fn running_spec_rows() {
+        let model = TrayMenu::Active {
+            paused: false,
+            current: "王小明・官網改版".into(),
+            others: vec![pin("p2", "王小明・設計")],
+        };
+        assert_eq!(
+            menu_spec(&model),
+            with_tail(vec![
+                item("status", "計時中：王小明・官網改版", false),
+                item("pause", "暫停", true),
+                item("stop", "停止計時", true),
+                Row::Separator,
+                item("others", "改記其他專案：", false),
+                item("pin:p2", "▶ 王小明・設計", true),
+            ])
+        );
+    }
+
+    #[test]
+    fn paused_spec_shows_resume() {
+        let model = TrayMenu::Active {
+            paused: true,
+            current: "A&B・官網".into(),
+            others: vec![],
+        };
+        let rows = menu_spec(&model);
+        assert_eq!(rows[0], item("status", "暫停中：A&&B・官網", false));
+        assert_eq!(rows[1], item("resume", "繼續", true));
+        assert_eq!(rows[2], item("stop", "停止計時", true));
+    }
+
+    #[test]
+    fn running_without_others_omits_section() {
+        let model = TrayMenu::Active {
+            paused: false,
+            current: "王小明・官網改版".into(),
+            others: vec![],
+        };
+        assert_eq!(
+            menu_spec(&model),
+            with_tail(vec![
+                item("status", "計時中：王小明・官網改版", false),
+                item("pause", "暫停", true),
+                item("stop", "停止計時", true),
+            ])
+        );
     }
 
     #[test]
