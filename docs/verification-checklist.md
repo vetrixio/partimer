@@ -29,7 +29,7 @@ Test on macOS 15 or later; note the macOS version and whether the Mac is Apple S
 - [ ] **M8** Timing: the plant is awake and its leaves sway (4 frames, one every 0.5 s); the time shows to the right as `1:23` with a visible gap between icon and digits; it updates when the minute changes.
 - [ ] **M9** Paused: resting plant with `⏸ 0:47` beside it; no animation.
 - [ ] **M10** Left-click on the icon opens the panel just below the icon; a second left-click hides it. Left-click shows no menu.
-- [ ] **M11** Right-click shows the menu 打開面板／紀錄／設定／結束; each item works (結束 quits; the unsaved title/content typed in the panel is in the entry after restart).
+- [ ] **M11** Right-click shows the menu (打開面板／紀錄／設定／結束 plus the timer rows, see T1–T3); each item works (結束 quits; the unsaved title/content typed in the panel is in the entry after restart).
 - [ ] **M12** Ctrl+Option+P opens the panel near the top centre of the main screen, focused; pressing it again hides it. The settings window shows no red text about the shortcut.
 - [ ] **M13** Notifications: on first reminder macOS asks for permission (or the app appears in System Settings → Notifications as 打工人計時器); if denied, nothing breaks.
 - [ ] **M14** Logging out / shutting down while timing keeps the unsaved title/content (OS quit path without the menu).
@@ -61,7 +61,7 @@ Test on Windows 10 or 11 (note which).
 - [ ] **W8** Tray icon: resting plant when not timing; awake plant swaying (4 frames, 0.5 s) while timing; resting plant while paused. Clear at 100%, 125%, 150% and 200% display scaling.
 - [ ] **W9** Hover tooltip reads exactly 「計時中 1:23・專案名」 while timing, 「暫停中 ⏸ 0:47・專案名」 while paused, 「打工人計時器」 otherwise, and updates each minute.
 - [ ] **W10** Left-click on the icon opens the panel just above the icon (taskbar at the bottom); a second left-click hides it. Also check with the icon in the overflow area (^) and with the taskbar on another edge.
-- [ ] **W11** Right-click shows 打開面板／紀錄／設定／結束; each item works.
+- [ ] **W11** Right-click shows the menu (打開面板／紀錄／設定／結束 plus the timer rows, see T1–T3); each item works.
 - [ ] **W12** Ctrl+Alt+P opens / hides the panel. If another app owns Ctrl+Alt+P, the settings window explains it in red.
 - [ ] **W13** Hourly and 12-hour notifications appear in the Action Center as 打工人計時器 with the texts 「已計時 N 小時・專案名」 / 「是不是忘了停？已計時 12 小時・專案名」, once each (rules: N1–N2 below). With notifications turned off for the app, nothing breaks.
 - [ ] **W19** Signing out of Windows, and separately shutting down / restarting, while timing with unsaved text typed in the panel (not saved with Ctrl+S): after signing in again the unsaved title/content is in the running entry (README says it is saved on Windows). Note what you saw for both.
@@ -103,7 +103,7 @@ Test on Ubuntu 24.04 or later in the default (Wayland) session, and the X11 item
 - [ ] **U9** Running `partimer` again shows the punch panel near the top centre of the main screen, on top and focused (checked headless under Xvfb only: panel 360 wide at 20% from the top, centred; its height follows the content, e.g. 360×595 with one entry today).
 - [ ] **U10** Tray (AppIndicator): resting plant when not timing; awake plant swaying while timing; resting plant while paused. (Checked headless only: the item is exported on D-Bus and sends a new icon every 0.5 s while running, none while paused.)
 - [ ] **U11** Next to the icon the time shows as `1:23` / `⏸ 0:47` where the desktop supports indicator labels (GNOME's AppIndicator extension may not; note what you see). (Checked headless only: label `  11:59` → `  12:00`, `  ⏸ 0:47`.)
-- [ ] **U12** Clicking the icon (left or right) always shows the menu 打開面板／紀錄／設定／結束; each item works. 打開面板 opens the panel in the top-right corner under the top bar (checked headless only: 360×480 at the top-right of the Xvfb screen; 結束 exited with code 0).
+- [ ] **U12** Clicking the icon (left or right) always shows the menu (打開面板／紀錄／設定／結束 plus the timer rows, see T1–T3); each item works. 打開面板 opens the panel in the top-right corner under the top bar (checked headless only: 360×480 at the top-right of the Xvfb screen; 結束 exited with code 0).
 - [ ] **U13** X11 session: Ctrl+Alt+P opens / hides the panel, and the settings window shows no red text.
 - [ ] **U14** Wayland session (Ubuntu default): the settings window shows the red text about Wayland and the custom-shortcut steps; a custom shortcut in 設定 → 鍵盤 → 檢視及自訂快捷鍵 → 自訂快捷鍵 running `partimer` opens the panel.
 - [ ] **U15** Hourly and 12-hour notifications appear in GNOME's notification list as 打工人計時器 with the texts 「已計時 N 小時・專案名」 / 「是不是忘了停？已計時 12 小時・專案名」, once each (rules: N1–N2 below). (Checked headless only: one D-Bus Notify call each, title 打工人計時器, bodies 「是不是忘了停？已計時 12 小時・官網改版」 and 「已計時 12 小時・官網改版」.)
@@ -383,6 +383,14 @@ Set-up: two clients with two projects each, one archived project, one project wi
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
+- **S15** Pinning (設定 → 客戶與專案): every project row has a 釘選 / 已釘選 toggle that works by keyboard (Tab, Space) and the counter at the top of the section reads 已釘選 N／5 and follows each change. Pin five projects, then try a 6th: the error 「最多釘選 5 個，請先取消一個」 shows in the section's error place and the 6th stays 釘選. Unpin one and the 6th can be pinned. The toggle is disabled for archived projects and for projects of archived clients.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **S16** Archiving a pinned project (and, separately, a pinned project's client) removes it from the tray menu within about a second and lowers the counter. Unarchiving it does not pin it again (toggle shows 釘選, counter unchanged). Pinning is not written to the activity log.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
 
 ## Common: floating clock (each item on macOS, Windows and Ubuntu)
 
@@ -425,6 +433,55 @@ Set-up: a project to time. On macOS the clock is off by default: turn on 設定 
   - [ ] Windows
   - [ ] Ubuntu
 - **C10** Fractional display scaling (Windows 設定 → 顯示器 → 縮放 125 % and then 150 %; macOS a scaled external display if available; Ubuntu fractional scaling if enabled): drag the clock somewhere, quit from the tray menu and start again, three times. The clock comes back on exactly the same spot each time (note any drift, even 1 px, and the scale). Then change 透明度 in the settings window: the clock follows at once.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+
+## Common: tray menu (each item on macOS, Windows and Ubuntu)
+
+Set-up: at least three projects pinned in 設定 → 客戶與專案, across two clients. See also S15–S16 for the pinning rules.
+
+- **T1** Menu when not timing, with pinned projects: one row 「▶ 客戶・專案」 per pinned project in client-name then project-name order (same as the panel's project menu), then 打開面板／紀錄／設定 and 結束. Right-click on macOS and Windows, any click on Ubuntu. Names longer than 20 characters in the client or project part are shortened to 19 characters plus `…`.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **T2** Menu when not timing and nothing is pinned: the first row is the disabled grey hint 「到設定釘選專案，就能從這裡開始計時」, then 打開面板／紀錄／設定 and 結束.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **T3** Menu while timing: a disabled first row 「計時中：客戶・專案」, 暫停, 停止計時, then (when other pinned projects exist) a separator, the disabled header 「改記其他專案：」 and the other pinned projects (the running one is not listed, even if pinned). With no other pinned project the header and its separator are omitted. Paused: the first row reads 「暫停中：…」 and 暫停 becomes 繼續. If the running project is not pinned or was archived while timing, its name still shows in the first row.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **T4** From the menu: clicking a pinned project when idle starts timing at once (no confirm); 暫停 / 繼續 / 停止計時 work. The panel (open or hidden), the records window and the floating clock update immediately, and the menu follows within about a second. The same entries and activity-log rows result as with the panel buttons. Starting from the menu uses the panel's current title and content when that project is the panel's selected one; another project takes that project's previous title.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **T5** Switching: while timing, click another pinned project. The box 「結束目前這筆，改記另一個專案？」 appears with 「結束並切換」 / 「取消」. 取消 changes nothing. 結束並切換 ends the current entry and starts the new project (title = that project's previous title, empty content). The tray menu stays responsive while the box is open. If you press STOP in the panel while the box is open and then confirm, nothing happens.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **T6** Unsaved text: type a title and content in the panel without saving, then 停止計時 from the menu: the entry has that text. Repeat with 結束並切換. Do both with the panel open and with it hidden (Esc). Draft conflict: edit the running entry's title in the records window so the panel shows its unsaved-text conflict, then stop from the menu: the records-window text is kept, the panel's unsaved text is not written.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **T7** Known limitation: text still being composed in an IME (candidate window open, not committed) is not included when stopping or switching from the menu; only the committed text is saved.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **T8** Stale menu (Ubuntu): open the menu while timing, press STOP in the panel (or with the global shortcut), then click 停止計時 in the still-open menu: nothing happens and no notification appears. Likewise click a pinned project that is already the running one, or 暫停 while already paused: nothing happens. Clicking a pinned project in a stale 「沒在計時」 menu while another project is running shows the switch confirm instead of starting a second timer.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **T9** Failures: archive or delete a pinned project (in 設定) and click its row in a menu opened before that: a system notification with the error text shows, and the menu is rebuilt with the real state. A normal success shows no notification.
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **T10** Project and client names containing `&` and `_` (e.g. 「A&B_客戶」／「x_y&z」) show literally in the menu rows and the first status row, with no underlined letter or missing character. A name over 20 characters is shown shortened with `…`. (Ubuntu GTK treats `_` as a mnemonic, muda treats `&`: check on every platform.)
+  - [ ] macOS
+  - [ ] Windows
+  - [ ] Ubuntu
+- **T11** With more than 5 pinned projects in the data (hand-edit `data.json` or 轉入 a file): the menu lists only the first 5 in order, 設定 shows all of them with the counter above 5, and no new project can be pinned until the count drops below 5.
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
