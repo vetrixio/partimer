@@ -528,6 +528,7 @@ mod tests {
             name: "官網改版".into(),
             color: 0,
             archived: false,
+            pinned: false,
         });
         d.entries = entries;
         let f = Filter {
@@ -936,6 +937,7 @@ mod tests {
             name: "官網改版".into(),
             color: 3,
             archived: true,
+            pinned: false,
         });
         d
     }

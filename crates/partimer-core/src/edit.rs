@@ -203,6 +203,7 @@ mod tests {
                 name: id.into(),
                 color: 0,
                 archived,
+                pinned: false,
             });
         }
         d

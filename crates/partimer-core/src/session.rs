@@ -555,6 +555,7 @@ impl<F: Fs> Session<F> {
                         name: p.name.clone(),
                         color: p.color,
                         archived: p.archived,
+                        pinned: p.pinned,
                         entry_count: self
                             .data
                             .entries
@@ -573,7 +574,10 @@ impl<F: Fs> Session<F> {
             })
             .collect();
         clients.sort_by(|a, b| a.name.cmp(&b.name));
-        CatalogView { clients }
+        CatalogView {
+            clients,
+            pin_limit: catalog::PIN_LIMIT,
+        }
     }
 
     pub fn rename_client(
@@ -619,6 +623,15 @@ impl<F: Fs> Session<F> {
         now: DateTime<Utc>,
     ) -> Result<(), String> {
         self.catalog_change(now, |d| catalog::set_project_archived(d, id, archived))
+    }
+
+    pub fn set_project_pinned(
+        &mut self,
+        id: &str,
+        pinned: bool,
+        now: DateTime<Utc>,
+    ) -> Result<(), String> {
+        self.catalog_change(now, |d| catalog::set_project_pinned(d, id, pinned))
     }
 
     pub fn deletion_impact(

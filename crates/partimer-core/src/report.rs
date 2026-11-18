@@ -215,6 +215,7 @@ mod tests {
                 name: name.into(),
                 color: 0,
                 archived,
+                pinned: false,
             });
         }
         d

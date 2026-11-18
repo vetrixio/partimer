@@ -62,6 +62,7 @@ fn base_data() -> Data {
             name: name.into(),
             color,
             archived: false,
+            pinned: false,
         });
     }
     d.entries.push(entry(
@@ -1443,6 +1444,7 @@ fn select_project_rejects_archived_and_unknown() {
         name: "藏起來".into(),
         color: 2,
         archived: false,
+        pinned: false,
     });
     let mut s = open(seed(&d), at(0));
     let generation = s.draft.generation;
@@ -1545,3 +1547,29 @@ fn normal_stop_has_no_clock_notice() {
 }
 
 mod moving;
+
+#[test]
+fn catalog_view_shows_pins() {
+    let mut s = open(seeded(), at(0));
+    s.set_project_pinned("p1", true, at(1)).unwrap();
+    let view = s.catalog();
+    assert_eq!(view.pin_limit, 5);
+    let p = |id: &str| {
+        view.clients[0]
+            .projects
+            .iter()
+            .find(|p| p.id == id)
+            .unwrap()
+            .pinned
+    };
+    assert!(p("p1"));
+    assert!(!p("p2"));
+    assert!(
+        on_disk(&s)
+            .projects
+            .iter()
+            .find(|p| p.id == "p1")
+            .unwrap()
+            .pinned
+    );
+}

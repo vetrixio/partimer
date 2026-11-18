@@ -35,6 +35,8 @@ pub struct Project {
     pub color: u8,
     #[serde(default)]
     pub archived: bool,
+    #[serde(default)]
+    pub pinned: bool,
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -369,5 +371,20 @@ mod tests {
     #[test]
     fn top_level_not_object_is_error() {
         assert!(parse_data(b"[]").is_err());
+    }
+
+    #[test]
+    fn missing_pinned_reads_false() {
+        let d = parse_data(br#"{"projects":[{"id":"p1","clientId":"c1","name":"x"}]}"#).unwrap();
+        assert!(!d.projects[0].pinned);
+    }
+
+    #[test]
+    fn pinned_round_trips() {
+        let mut d =
+            parse_data(br#"{"projects":[{"id":"p1","clientId":"c1","name":"x"}]}"#).unwrap();
+        d.projects[0].pinned = true;
+        let json = String::from_utf8(to_json(&d)).unwrap();
+        assert!(json.contains("\"pinned\": true"), "{json}");
     }
 }

@@ -145,6 +145,7 @@ mod tests {
             name: "P".into(),
             color: 0,
             archived: false,
+            pinned: false,
         });
         d.projects.push(Project {
             extra: Default::default(),
@@ -153,6 +154,7 @@ mod tests {
             name: "Q".into(),
             color: 1,
             archived: false,
+            pinned: false,
         });
         d
     }
