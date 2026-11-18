@@ -160,9 +160,9 @@
                 type="button"
                 class="pin"
                 aria-pressed={p.pinned}
-                aria-label={`釘選：${p.name}`}
+                aria-label={`${p.pinned ? "已釘選" : "釘選"}：${p.name}`}
                 disabled={p.archived || client.archived}
-                onclick={() => guarded(p.id, () => api.setProjectPinned(p.id, !p.pinned))}
+                onclick={() => void guarded(p.id, () => api.setProjectPinned(p.id, !p.pinned))}
               >
                 {p.pinned ? "已釘選" : "釘選"}
               </button>

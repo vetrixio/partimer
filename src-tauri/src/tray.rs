@@ -334,10 +334,11 @@ fn pick(app: &AppHandle, project_id: &str) {
 /// The native dialog blocks, so it runs on its own thread (never on the main thread), and the
 /// session lock is not held while it is open. `tray_switch` rechecks the state afterwards.
 fn confirm_switch(app: &AppHandle, project_id: String, running_entry: String) {
-    let app = app.clone();
+    let handle = app.clone();
     let spawned = thread::Builder::new()
         .name("partimer-tray-confirm".into())
         .spawn(move || {
+            let app = handle;
             let ok = moving::confirm(
                 &app,
                 APP_NAME,
@@ -352,18 +353,21 @@ fn confirm_switch(app: &AppHandle, project_id: String, running_entry: String) {
         });
     if let Err(e) = spawned {
         eprintln!("partimer: tray: cannot open the confirm dialog: {e}");
+        ticker::notify(app, &format!("無法顯示確認視窗：{e}"));
+        refresh_menu(app);
     }
 }
 
 /// Rebuild the tray menu if the timer state or the pins changed since it was last built.
 /// Call without holding the session lock.
 pub fn refresh_menu(app: &AppHandle) {
-    let model = current_menu(app);
     let handle = app.clone();
-    // Compare, replace and remember on the main thread only, so refreshes from the ticker and
-    // from menu actions are applied one at a time and the remembered model is the shown one.
-    // A model computed earlier but applied later is corrected by the next tick.
+    // Compute, compare, replace and remember on the main thread only, so refreshes from the
+    // ticker and from menu actions are applied one at a time, each from the state as it is when
+    // it runs, and the remembered model is the shown one. The closure takes the session lock,
+    // so callers must not hold it.
     let sent = app.run_on_main_thread(move || {
+        let model = current_menu(&handle);
         let (Some(state), Some(tray)) =
             (handle.try_state::<TrayState>(), handle.tray_by_id(TRAY_ID))
         else {
