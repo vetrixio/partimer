@@ -1220,8 +1220,10 @@ impl<F: Fs> Session<F> {
 }
 
 mod moving;
+mod tray;
 
 pub use moving::{CsvImportPlan, TransferInPlan};
+pub use tray::TrayPick;
 
 #[cfg(test)]
 mod tests;
