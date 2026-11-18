@@ -6,6 +6,7 @@
   import { onMount } from "svelte";
   import { ask } from "@tauri-apps/plugin-dialog";
   import { api, onStateChanged, type CatalogView, type Id, type ItemKind } from "../lib/api";
+  import { pinnedCount } from "../lib/pins";
   import { COLORS } from "../lib/colors";
   import { formatMinutes } from "../lib/time";
 
@@ -131,6 +132,7 @@
   {#if catalog.clients.length === 0}
     <p class="empty">還沒有客戶或專案；在打卡面板建立第一個專案。</p>
   {/if}
+  <p class="pin-count">已釘選 {pinnedCount(catalog)}／{catalog.pinLimit}</p>
   {#each catalog.clients as client (client.id)}
     <div class="client" class:archived={client.archived}>
       {@render nameRow("client", client.id, client.name, client.archived, `客戶名稱：${client.name}`)}
@@ -154,6 +156,16 @@
                   ></button>
                 {/each}
               </span>
+              <button
+                type="button"
+                class="pin"
+                aria-pressed={p.pinned}
+                aria-label={`釘選：${p.name}`}
+                disabled={p.archived || client.archived}
+                onclick={() => guarded(p.id, () => api.setProjectPinned(p.id, !p.pinned))}
+              >
+                {p.pinned ? "已釘選" : "釘選"}
+              </button>
               <small>{p.entryCount} 筆紀錄</small>
             </div>
           </li>
@@ -221,6 +233,14 @@
   .swatch.current {
     outline: 2px solid var(--fg);
     outline-offset: 2px;
+  }
+  .meta button.pin {
+    padding: 4px 10px;
+    white-space: nowrap;
+  }
+  .pin-count {
+    margin: 0 0 8px;
+    color: var(--muted);
   }
   small {
     color: var(--muted);

@@ -156,6 +156,7 @@ pub fn run() {
             commands::rename_client,
             commands::rename_project,
             commands::set_project_color,
+            commands::set_project_pinned,
             commands::set_archived,
             commands::deletion_impact,
             commands::delete_item,
