@@ -343,6 +343,18 @@ pub fn set_project_color(
 }
 
 #[tauri::command]
+pub fn set_project_pinned(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    pinned: bool,
+) -> Res<()> {
+    mutate(&app, &state, |s| {
+        s.set_project_pinned(&id, pinned, Utc::now())
+    })
+}
+
+#[tauri::command]
 pub fn set_archived(
     app: AppHandle,
     state: State<'_, AppState>,

@@ -132,6 +132,7 @@ export interface ProjectView {
   name: string;
   color: number;
   archived: boolean;
+  pinned: boolean;
   entryCount: number;
 }
 
@@ -144,6 +145,7 @@ export interface ClientView {
 
 export interface CatalogView {
   clients: ClientView[];
+  pinLimit: number;
 }
 
 export type ItemKind = "client" | "project";
@@ -228,6 +230,8 @@ export const api = {
   renameClient: (id: Id, name: string) => invoke<void>("rename_client", { id, name }),
   renameProject: (id: Id, name: string) => invoke<void>("rename_project", { id, name }),
   setProjectColor: (id: Id, color: number) => invoke<void>("set_project_color", { id, color }),
+  setProjectPinned: (id: Id, pinned: boolean) =>
+    invoke<void>("set_project_pinned", { id, pinned }),
   setArchived: (kind: ItemKind, id: Id, archived: boolean) =>
     invoke<void>("set_archived", { kind, id, archived }),
   deletionImpact: (kind: ItemKind, id: Id) =>
