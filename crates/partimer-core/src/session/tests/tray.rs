@@ -148,3 +148,44 @@ fn tray_pause_resume_are_idempotent() {
     assert!(s.tray_resume(at(6)).unwrap());
     assert!(!s.tray_resume(at(7)).unwrap());
 }
+
+#[test]
+fn tray_switch_with_conflict_keeps_stored_text() {
+    let mut s = open(seeded(), at(0));
+    s.start("p1", "舊標題", "舊內容", at(1)).unwrap();
+    let id = running_id(&s, at(2));
+    s.set_draft("打字中".into(), "打字中內容".into(), s.draft.generation);
+    let mut f = s.entry_form(&id).unwrap();
+    f.title = "別處改的".into();
+    s.save_entry(Some(&id), f, at(30)).unwrap();
+    assert!(s.draft_conflict);
+    assert!(s.tray_switch("p2", &id, at(60)).unwrap());
+    let old = entry_of(&s, &id);
+    assert!(old.end.is_some());
+    assert_eq!(
+        (old.title.as_str(), old.content.as_str()),
+        ("別處改的", "舊內容")
+    );
+    assert!(!s.draft_conflict);
+    assert_eq!(running_of(&s).project_id, "p2");
+}
+
+#[test]
+fn tray_stop_while_paused_ends_at_pause() {
+    let mut s = open(seeded(), at(0));
+    s.start("p1", "t", "c", at(1)).unwrap();
+    let id = running_id(&s, at(2));
+    assert!(s.tray_pause(at(10)).unwrap());
+    assert!(s.tray_stop(at(100)).unwrap());
+    assert_eq!(entry_of(&s, &id).end, Some(at(10)));
+}
+
+#[test]
+fn tray_switch_while_paused_ends_at_pause() {
+    let mut s = open(seeded(), at(0));
+    s.start("p1", "t", "c", at(1)).unwrap();
+    let id = running_id(&s, at(2));
+    assert!(s.tray_pause(at(10)).unwrap());
+    assert!(s.tray_switch("p2", &id, at(100)).unwrap());
+    assert_eq!(entry_of(&s, &id).end, Some(at(10)));
+}

@@ -1575,6 +1575,41 @@ fn catalog_view_shows_pins() {
 }
 
 #[test]
+fn catalog_view_reports_effective_pin_only() {
+    let mut s = open(seeded(), at(0));
+    s.data
+        .projects
+        .iter_mut()
+        .find(|p| p.id == "p1")
+        .unwrap()
+        .pinned = true;
+    s.data
+        .projects
+        .iter_mut()
+        .find(|p| p.id == "p1")
+        .unwrap()
+        .archived = true;
+    s.data
+        .projects
+        .iter_mut()
+        .find(|p| p.id == "p2")
+        .unwrap()
+        .pinned = true;
+    let pinned = |s: &Session<MemFs>, id: &str| {
+        s.catalog().clients[0]
+            .projects
+            .iter()
+            .find(|p| p.id == id)
+            .unwrap()
+            .pinned
+    };
+    assert!(!pinned(&s, "p1"));
+    assert!(pinned(&s, "p2"));
+    s.data.clients[0].archived = true;
+    assert!(!pinned(&s, "p2"));
+}
+
+#[test]
 fn tray_menu_follows_session() {
     use crate::tray_menu::{PinItem, TrayMenu};
     let mut s = open(seeded(), at(0));

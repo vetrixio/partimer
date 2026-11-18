@@ -387,7 +387,7 @@ Set-up: two clients with two projects each, one archived project, one project wi
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
-- **S16** Archiving a pinned project (and, separately, a pinned project's client) removes it from the tray menu within about a second and lowers the counter. Unarchiving it does not pin it again (toggle shows 釘選, counter unchanged). Pinning is not written to the activity log.
+- **S16** Archiving a pinned project (and, separately, a pinned project's client) removes it from the tray menu within about a second and lowers the counter. Unarchiving it does not pin it again (toggle shows 釘選, counter unchanged). Pinning is not written to the activity log (check the `activity.log` file in the data folder, opened via 設定 →「打開資料夾」).
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
@@ -457,11 +457,11 @@ Set-up: at least three projects pinned in 設定 → 客戶與專案, across two
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
-- **T5** Switching: while timing, click another pinned project. The box 「結束目前這筆，改記另一個專案？」 appears with 「結束並切換」 / 「取消」. 取消 changes nothing. 結束並切換 ends the current entry and starts the new project (title = that project's previous title, empty content). The tray menu stays responsive while the box is open. If you press STOP in the panel while the box is open and then confirm, nothing happens.
+- **T5** Switching: while timing, click another pinned project. The box 「結束目前這筆，改記另一個專案？」 appears with 「結束並切換」 / 「取消」. 取消 changes nothing. 結束並切換 ends the current entry and starts the new project (title = that project's previous title, empty content). The tray menu stays responsive while the box is open. If you press STOP in the panel while the box is open and then confirm, nothing happens. On macOS and Windows the box must appear in front of other apps' windows and be clickable directly, even when all of partimer's windows are hidden (the box is opened from the tray while the app is not the frontmost one); if it appears behind other windows, report it.
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
-- **T6** Unsaved text: type a title and content in the panel without saving, then 停止計時 from the menu: the entry has that text. Repeat with 結束並切換. Do both with the panel open and with it hidden (Esc). Draft conflict: edit the running entry's title in the records window so the panel shows its unsaved-text conflict, then stop from the menu: the records-window text is kept, the panel's unsaved text is not written.
+- **T6** Unsaved text: type a title and content in the panel without saving, then 停止計時 from the menu: the entry has that text. Repeat with 結束並切換. Do both with the panel open and with it hidden (Esc). Draft conflict, step by step: (1) start timing and type a title in the panel without saving; (2) open the records window, change the same running entry's 內容 and press 儲存; (3) the panel now shows the unsaved-text conflict notice; (4) 停止計時 from the tray menu (repeat with 結束並切換). Expected: the entry keeps the records-window text and the panel's unsaved text is not written.
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
@@ -469,13 +469,9 @@ Set-up: at least three projects pinned in 設定 → 客戶與專案, across two
   - [ ] macOS
   - [ ] Windows
   - [ ] Ubuntu
-- **T8** Stale menu (Ubuntu): open the menu while timing, press STOP in the panel (or with the global shortcut), then click 停止計時 in the still-open menu: nothing happens and no notification appears. Likewise click a pinned project that is already the running one, or 暫停 while already paused: nothing happens. Clicking a pinned project in a stale 「沒在計時」 menu while another project is running shows the switch confirm instead of starting a second timer.
-  - [ ] macOS
-  - [ ] Windows
+- **T8** Stale menu (Ubuntu only: macOS and Windows menus are rebuilt while closed, so no stale menu can be clicked): open the menu while timing, press STOP in the panel (or with the global shortcut), then click 停止計時 in the still-open menu: nothing happens and no notification appears. Likewise click a pinned project that is already the running one, or 暫停 while already paused: nothing happens. Clicking a pinned project in a stale 「沒在計時」 menu while another project is running shows the switch confirm instead of starting a second timer.
   - [ ] Ubuntu
-- **T9** Failures: archive or delete a pinned project (in 設定) and click its row in a menu opened before that: a system notification with the error text shows, and the menu is rebuilt with the real state. A normal success shows no notification.
-  - [ ] macOS
-  - [ ] Windows
+- **T9** Failures (Ubuntu only: macOS and Windows menus are rebuilt while closed, so no stale menu can be clicked): archive or delete a pinned project (in 設定) and click its row in a menu opened before that: a system notification with the error text shows, and the menu is rebuilt with the real state. A normal success shows no notification.
   - [ ] Ubuntu
 - **T10** Project and client names containing `&` and `_` (e.g. 「A&B_客戶」／「x_y&z」) show literally in the menu rows and the first status row, with no underlined letter or missing character. A name over 20 characters is shown shortened with `…`. (Ubuntu GTK treats `_` as a mnemonic, muda treats `&`: check on every platform.)
   - [ ] macOS

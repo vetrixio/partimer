@@ -545,6 +545,7 @@ impl<F: Fs> Session<F> {
             .clients
             .iter()
             .map(|c| {
+                let client_archived = c.archived;
                 let mut projects: Vec<ProjectView> = self
                     .data
                     .projects
@@ -555,7 +556,8 @@ impl<F: Fs> Session<F> {
                         name: p.name.clone(),
                         color: p.color,
                         archived: p.archived,
-                        pinned: p.pinned,
+                        // Effective pin only, so the UI never shows a pin it cannot undo.
+                        pinned: p.pinned && !p.archived && !client_archived,
                         entry_count: self
                             .data
                             .entries

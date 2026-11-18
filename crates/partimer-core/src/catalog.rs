@@ -160,10 +160,9 @@ pub fn set_client_archived(data: &mut Data, id: &str, archived: bool) -> Result<
         .find(|c| c.id == id)
         .ok_or(CatalogError::NotFound)?;
     c.archived = archived;
-    if archived {
-        for p in data.projects.iter_mut().filter(|p| p.client_id == id) {
-            p.pinned = false;
-        }
+    // Unarchiving never re-pins: this also cleans legacy data that kept `pinned` while archived.
+    for p in data.projects.iter_mut().filter(|p| p.client_id == id) {
+        p.pinned = false;
     }
     Ok(())
 }
@@ -175,9 +174,8 @@ pub fn set_project_archived(data: &mut Data, id: &str, archived: bool) -> Result
         .find(|p| p.id == id)
         .ok_or(CatalogError::NotFound)?;
     p.archived = archived;
-    if archived {
-        p.pinned = false;
-    }
+    // Unarchiving never re-pins: this also cleans legacy data that kept `pinned` while archived.
+    p.pinned = false;
     Ok(())
 }
 
@@ -817,6 +815,26 @@ mod tests {
         set_project_archived(&mut d, &ids[0], false).unwrap();
         set_client_archived(&mut d, &cid, false).unwrap();
         assert!(d.projects.iter().all(|p| !p.pinned));
+    }
+
+    #[test]
+    fn unarchive_clears_legacy_pin() {
+        let mut d = pin_data(2);
+        let cid = d.clients[0].id.clone();
+        let a = d.projects[0].id.clone();
+        d.projects[0].archived = true;
+        d.projects[0].pinned = true;
+        set_project_archived(&mut d, &a, false).unwrap();
+        assert!(!d.projects[0].pinned);
+        assert!(effective_pins(&d).is_empty());
+
+        d.clients[0].archived = true;
+        for p in &mut d.projects {
+            p.pinned = true;
+        }
+        set_client_archived(&mut d, &cid, false).unwrap();
+        assert!(d.projects.iter().all(|p| !p.pinned));
+        assert!(effective_pins(&d).is_empty());
     }
 
     #[test]
